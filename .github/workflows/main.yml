@@ -9,6 +9,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+      - name: Install worker-build
+        run: cargo install worker-build
       - name: Generate wrangler.toml
         run: |
           echo "${{ secrets.WRANGLER_TOML_TEMPLATE }}" > wrangler.toml
