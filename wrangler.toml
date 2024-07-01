@@ -1,0 +1,24 @@
+name = "memenow-storage-cf-workers"
+main = "build/worker/shim.mjs"
+compatibility_date = "2024-06-30"
+
+[build]
+command = "cargo install -q worker-build && worker-build --release"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "your-production-bucket-name"
+preview_bucket_name = "your-preview-bucket-name"
+
+[[kv_namespaces]]
+binding = "CONFIG"
+id = "your-production-kv-namespace-id"
+preview_id = "your-preview-kv-namespace-id"
+
+[[durable_objects.bindings]]
+name = "UPLOAD_TRACKER"
+class_name = "UploadTracker"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["UploadTracker"]

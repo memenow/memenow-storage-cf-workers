@@ -1,0 +1,24 @@
+name: Deploy Worker
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate wrangler.toml
+        run: |
+          echo "${{ secrets.WRANGLER_TOML_TEMPLATE }}" > wrangler.toml
+          sed -i 's/your-production-bucket-name/${{ secrets.PRD_R2_BUCKET }}/g' wrangler.toml
+          sed -i 's/your-preview-bucket-name/${{ secrets.DEV_R2_BUCKET }}/g' wrangler.toml
+          sed -i 's/your-production-kv-namespace-id/${{ secrets.PRD_KV_NAMESPACE_ID }}/g' wrangler.toml
+          sed -i 's/your-preview-kv-namespace-id/${{ secrets.DEV_KV_NAMESPACE_ID }}/g' wrangler.toml
+      - name: Build & Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
