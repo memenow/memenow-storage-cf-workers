@@ -1,0 +1,42 @@
+[package]
+name = "memenow-storage-cf-workers"
+version = "0.1.0"
+edition = "2021"
+authors = [ "billduke13.eth <billduke13_eth@pm.me>" ]
+
+[package.metadata.release]
+release = false
+
+# https://github.com/rustwasm/wasm-pack/issues/1247
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+worker = { version="0.3.0", features=['http'] }
+worker-macros = { version="0.3.0", features=['http'] }
+console_error_panic_hook = { version = "0.1.1" }
+http = "1.1"
+serde_json = "1.0.119"
+cfg-if = "1.0.0"
+futures = "0.3.30"
+lazy_static = "1.5.0"
+serde = { version = "1.0.203", features = ["derive"] }
+rand = { version = "0.9.0-alpha.1", features = ["getrandom"] }
+thiserror = "1.0.61"
+getrandom = { version = "0.2.15", features = ["js"] }
+once_cell = "1.19.0"
+chrono = { version = "0.4.38", features = ["serde"] }
+sha2 = "0.11.0-pre.3"
+
+[dependencies.web-sys]
+version = "0.3.60"
+features = [
+    "console",
+]
+
+[profile.release]
+lto = true
+opt-level = "s"
