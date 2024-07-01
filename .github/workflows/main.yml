@@ -24,10 +24,7 @@ jobs:
           sed -i 's/your-production-kv-namespace-id/${{ secrets.PRD_KV_NAMESPACE_ID }}/g' wrangler.toml
           sed -i 's/your-preview-kv-namespace-id/${{ secrets.DEV_KV_NAMESPACE_ID }}/g' wrangler.toml
       - name: Build & Deploy Worker
-        run: |
-          cargo build --release --target wasm32-unknown-unknown
-          worker-build --release
-          wrangler publish --config wrangler.toml
-        env:
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
