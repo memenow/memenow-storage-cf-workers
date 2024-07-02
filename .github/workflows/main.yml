@@ -22,9 +22,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: |
-            if [[ "${{ github.event_name }}" == "release" ]]; then
-              wrangler deploy --dispatch-namespace prd-mmn
-            elif [[ "${{ github.event_name }}" == "push" ]]; then
-              wrangler deploy --dispatch-namespace dev-mmn
-            fi
+          command: ${{ github.event_name == 'release' && 'deploy --dispatch-namespace prd-mmn' || 'deploy --dispatch-namespace dev-mmn' }}
