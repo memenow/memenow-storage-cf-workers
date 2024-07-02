@@ -24,4 +24,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: publish ${{ github.event_name == 'push' && '--env preview' || '' }}
+          command: publish --dispatch-namespace prd-mmn ${{ github.event_name == 'push' && '--env preview' || '' }}
