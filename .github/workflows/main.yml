@@ -1,10 +1,12 @@
 name: Deploy Worker
+
 on:
   push:
     branches:
       - main
   release:
     types: [published]
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,4 +24,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: ${{ github.event_name == 'release' && 'deploy --dispatch-namespace prd-mmn' || 'deploy --dispatch-namespace dev-mmn' }}
+          command: publish ${{ github.event_name == 'push' && '--env preview' || '' }}
