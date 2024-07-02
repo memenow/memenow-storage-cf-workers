@@ -35,11 +35,11 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
     let response = router
         .post_async("/v1/uploads/init", |req, ctx| async move {
             let logger = Logger::new("static-request-id".to_string());
-            handlers::handle_upload(req, ctx.env, &ctx.data, &logger).await
+            handlers::handle_upload_init(req, ctx.env, &ctx.data, &logger).await
         })
         .post_async("/v1/uploads/chunk", |req, ctx| async move {
             let logger = Logger::new("static-request-id".to_string());
-            handlers::handle_upload(req, ctx.env, &ctx.data, &logger).await
+            handlers::handle_upload_chunk(req, ctx.env, &ctx.data, &logger).await
         })
         .get_async("/v1/uploads/:id", |req, ctx| async move {
             let logger = Logger::new("static-request-id".to_string());

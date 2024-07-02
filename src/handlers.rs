@@ -4,9 +4,25 @@ use crate::config::Config;
 use crate::errors::AppError;
 use crate::utils;
 use crate::logging::Logger;
+use serde_json::Value;
 
-pub async fn handle_upload(req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
-    logger.info("Handling upload request", None);
+pub async fn handle_upload_init(mut req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
+    logger.info("Handling upload initialization request", None);
+    let body: Value = match req.json().await {
+        Ok(json) => json,
+        Err(e) => {
+            logger.error(&format!("Failed to parse JSON: {:?}", e), None);
+            return Err(AppError::BadRequest("Invalid JSON data".to_string()).into());
+        }
+    };
+
+    logger.info("Request body", Some(body.clone()));
+
+    forward_to_durable_object(req, &env, config, logger).await
+}
+
+pub async fn handle_upload_chunk(mut req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
+    logger.info("Handling chunk upload request", None);
     forward_to_durable_object(req, &env, config, logger).await
 }
 
@@ -33,7 +49,7 @@ async fn forward_to_durable_object(req: Request, env: &Env, config: &Arc<Config>
     match stub.fetch_with_request(req).await {
         Ok(resp) => Ok(resp),
         Err(e) => {
-            logger.error(&format!("Error forwarding request to Durable Object: {}", e), None);
+            logger.error(&format!("Error forwarding request to Durable Object: {:?}", e), None);
             Err(AppError::Internal("Failed to process request".to_string()).into())
         }
     }
