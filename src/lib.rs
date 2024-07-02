@@ -8,9 +8,11 @@ mod handlers;
 mod durable_object;
 mod utils;
 mod logging;
+mod cors;
 
 use crate::config::Config;
 use crate::logging::Logger;
+use crate::cors::{handle_cors_preflight, add_cors_headers};
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Response> {
@@ -22,12 +24,20 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         "path": req.path()
     })));
 
+    if req.method() == Method::Options {
+        return handle_cors_preflight();
+    }
+
     let config = Config::load(&env).await?;
     let config = Arc::new(config);
 
     let router = Router::with_data(config);
-    router
-        .post_async("/v1/uploads", |req, ctx| async move {
+    let response = router
+        .post_async("/v1/uploads/init", |req, ctx| async move {
+            let logger = Logger::new("static-request-id".to_string());
+            handlers::handle_upload(req, ctx.env, &ctx.data, &logger).await
+        })
+        .post_async("/v1/uploads/chunk", |req, ctx| async move {
             let logger = Logger::new("static-request-id".to_string());
             handlers::handle_upload(req, ctx.env, &ctx.data, &logger).await
         })
@@ -44,5 +54,7 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
             handlers::handle_health_check(req, ctx, &logger).await
         })
         .run(req, env)
-        .await
+        .await?;
+
+    Ok(add_cors_headers(response))
 }
