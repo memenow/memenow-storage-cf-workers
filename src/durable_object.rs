@@ -6,6 +6,7 @@ use crate::utils;
 use crate::config::Config;
 use crate::logging::Logger;
 use sha2::{Sha256, Digest};
+use serde_json::Value;
 
 const MIN_CHUNK_SIZE: usize = 1024 * 1024;
 const MAX_CHUNK_SIZE: usize = 10 * 1024 * 1024;
@@ -50,15 +51,14 @@ impl DurableObject for UploadTracker {
 
 impl UploadTracker {
     async fn init_upload(&mut self, mut req: Request) -> Result<Response> {
-        let form_data = req.form_data().await?;
-        let file_name = self.extract_form_field(&form_data, "fileName")?;
-        let total_size: usize = self.extract_form_field(&form_data, "totalSize")?.parse()
-            .map_err(|e| AppError::BadRequest(format!("Invalid total size: {}", e)))?;
+        let body: Value = req.json().await?;
+        let file_name = body["fileName"].as_str().ok_or(AppError::BadRequest("Missing fileName".to_string()))?;
+        let total_size: usize = body["totalSize"].as_u64().ok_or(AppError::BadRequest("Invalid totalSize".to_string()))? as usize;
 
         let upload_id = utils::generate_unique_id();
         let chunk_size = self.calculate_chunk_size(total_size);
 
-        let progress = UploadProgress::new(file_name, total_size, upload_id.clone(), chunk_size);
+        let progress = UploadProgress::new(file_name.to_string(), total_size, upload_id.clone(), chunk_size);
         self.state.storage().put(&upload_id, progress).await?;
 
         utils::json_response(&serde_json::json!({
