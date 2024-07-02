@@ -95,6 +95,10 @@ impl UploadTracker {
             _ => return Err(AppError::BadRequest("Invalid file part".to_string()).into()),
         };
 
+        if chunk_data.len() > 128 * 1024 {
+            return Err(AppError::BadRequest("Chunk size exceeds limit".to_string()).into());
+        }
+
         if chunk_data.len() != (chunk.end - chunk.start) {
             return Err(AppError::BadRequest("Chunk size mismatch".to_string()).into());
         }
