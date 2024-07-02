@@ -4,32 +4,30 @@ use crate::config::Config;
 use crate::errors::AppError;
 use crate::utils;
 use crate::logging::Logger;
+use crate::models::UserRole;
 use serde_json::Value;
 use wasm_bindgen::JsValue;
 
 pub async fn handle_upload_init(mut req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
     logger.info("Handling upload initialization request", None);
 
-    let body = match req.json::<Value>().await {
-        Ok(json) => json,
-        Err(e) => {
-            logger.error(&format!("Failed to parse JSON: {:?}", e), None);
-            return Err(AppError::BadRequest("Invalid JSON data".to_string()).into());
-        }
-    };
+    let body = req.json::<Value>().await.map_err(|e| {
+        logger.error(&format!("Failed to parse JSON: {:?}", e), None);
+        AppError::BadRequest("Invalid JSON data".to_string())
+    })?;
 
     logger.info("Request body", Some(body.clone()));
 
-    let mut new_headers = Headers::new();
-    new_headers.set("Content-Type", "application/json")?;
+    let user_id = body["userId"].as_str().ok_or_else(|| AppError::BadRequest("Missing userId".to_string()))?.to_string();
+    let user_role = parse_user_role(&body["userRole"])?;
+    let content_type = body["contentType"].as_str().ok_or_else(|| AppError::BadRequest("Missing contentType".to_string()))?.to_string();
 
-    let new_req = Request::new_with_init(
-        req.url()?.as_str(),
-        RequestInit::new()
-            .with_method(Method::Post)
-            .with_headers(new_headers)
-            .with_body(Some(JsValue::from_str(&serde_json::to_string(&body)?)))
-    )?;
+    let mut new_body = body.clone();
+    new_body["userId"] = serde_json::Value::String(user_id);
+    new_body["userRole"] = serde_json::Value::String(format!("{:?}", user_role));
+    new_body["contentType"] = serde_json::Value::String(content_type);
+
+    let new_req = create_new_request(req.url()?.as_str(), &new_body)?;
 
     forward_to_durable_object(new_req, &env, config, logger).await
 }
@@ -66,4 +64,26 @@ async fn forward_to_durable_object(req: Request, env: &Env, config: &Arc<Config>
             Err(AppError::Internal("Failed to process request".to_string()).into())
         }
     }
+}
+
+fn parse_user_role(value: &Value) -> Result<UserRole> {
+    match value.as_str().ok_or_else(|| AppError::BadRequest("Missing userRole".to_string()))? {
+        "Creator" => Ok(UserRole::Creator),
+        "Member" => Ok(UserRole::Member),
+        "Subscriber" => Ok(UserRole::Subscriber),
+        _ => Err(AppError::BadRequest("Invalid userRole".to_string()).into()),
+    }
+}
+
+fn create_new_request(url: &str, body: &Value) -> Result<Request> {
+    let mut headers = Headers::new();
+    headers.set("Content-Type", "application/json")?;
+
+    Request::new_with_init(
+        url,
+        RequestInit::new()
+            .with_method(Method::Post)
+            .with_headers(headers)
+            .with_body(Some(JsValue::from_str(&serde_json::to_string(body)?)))
+    )
 }

@@ -1,14 +1,19 @@
+// src/config.rs
+
 use worker::*;
 use std::sync::Arc;
 use once_cell::sync::OnceCell;
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default,PartialEq)]
 pub struct Config {
     pub durable_object_name: String,
     pub tracker_name: String,
     pub bucket_name: String,
     pub max_file_size: usize,
     pub rate_limit: u32,
+    pub min_chunk_size: usize,
+    pub max_chunk_size: usize,
+    pub max_parallel_uploads: usize,
 }
 
 static CONFIG: OnceCell<Arc<Config>> = OnceCell::new();
@@ -26,6 +31,9 @@ impl Config {
             bucket_name: kv.get("BUCKET_NAME").text().await?.unwrap_or_else(|| "BUCKET".to_string()),
             max_file_size: kv.get("MAX_FILE_SIZE").text().await?.unwrap_or_else(|| "100000000".to_string()).parse().unwrap_or(100_000_000),
             rate_limit: kv.get("RATE_LIMIT").text().await?.unwrap_or_else(|| "100".to_string()).parse().unwrap_or(100),
+            min_chunk_size: kv.get("MIN_CHUNK_SIZE").text().await?.unwrap_or_else(|| "1048576".to_string()).parse().unwrap_or(1024 * 1024),
+            max_chunk_size: kv.get("MAX_CHUNK_SIZE").text().await?.unwrap_or_else(|| "10485760".to_string()).parse().unwrap_or(10 * 1024 * 1024),
+            max_parallel_uploads: kv.get("MAX_PARALLEL_UPLOADS").text().await?.unwrap_or_else(|| "5".to_string()).parse().unwrap_or(5),
         };
 
         CONFIG.set(Arc::new(config.clone())).unwrap();
