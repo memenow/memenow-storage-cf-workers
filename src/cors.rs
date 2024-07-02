@@ -9,9 +9,11 @@ pub fn handle_cors_preflight() -> Result<Response> {
     Ok(Response::ok("").unwrap().with_headers(headers))
 }
 
-pub fn add_cors_headers(mut res: Response) -> Response {
-    res.headers_mut().set("Access-Control-Allow-Origin", "*").unwrap();
-    res.headers_mut().set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS").unwrap();
-    res.headers_mut().set("Access-Control-Allow-Headers", "Content-Type").unwrap();
-    res
+pub fn add_cors_headers(res: Response) -> Result<Response> {
+    let mut headers = res.headers().clone();
+    headers.set("Access-Control-Allow-Origin", "*")?;
+    headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")?;
+    headers.set("Access-Control-Allow-Headers", "Content-Type")?;
+
+    Ok(Response::from_body(res.body().clone())?.with_status(res.status_code()).with_headers(headers))
 }

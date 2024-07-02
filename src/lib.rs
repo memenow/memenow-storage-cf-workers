@@ -56,5 +56,5 @@ pub async fn main(req: Request, env: Env, _ctx: worker::Context) -> Result<Respo
         .run(req, env)
         .await?;
 
-    Ok(add_cors_headers(response))
+    add_cors_headers(response)
 }

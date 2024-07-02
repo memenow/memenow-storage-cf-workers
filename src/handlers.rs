@@ -5,10 +5,12 @@ use crate::errors::AppError;
 use crate::utils;
 use crate::logging::Logger;
 use serde_json::Value;
+use wasm_bindgen::JsValue;
 
 pub async fn handle_upload_init(mut req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
     logger.info("Handling upload initialization request", None);
-    let body: Value = match req.json().await {
+
+    let body = match req.json::<Value>().await {
         Ok(json) => json,
         Err(e) => {
             logger.error(&format!("Failed to parse JSON: {:?}", e), None);
@@ -18,10 +20,21 @@ pub async fn handle_upload_init(mut req: Request, env: Env, config: &Arc<Config>
 
     logger.info("Request body", Some(body.clone()));
 
-    forward_to_durable_object(req, &env, config, logger).await
+    let mut new_headers = Headers::new();
+    new_headers.set("Content-Type", "application/json")?;
+
+    let new_req = Request::new_with_init(
+        req.url()?.as_str(),
+        RequestInit::new()
+            .with_method(Method::Post)
+            .with_headers(new_headers)
+            .with_body(Some(JsValue::from_str(&serde_json::to_string(&body)?)))
+    )?;
+
+    forward_to_durable_object(new_req, &env, config, logger).await
 }
 
-pub async fn handle_upload_chunk(mut req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
+pub async fn handle_upload_chunk(req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
     logger.info("Handling chunk upload request", None);
     forward_to_durable_object(req, &env, config, logger).await
 }
