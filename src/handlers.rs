@@ -3,87 +3,135 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::errors::AppError;
 use crate::utils;
+use serde_json::json;
 use crate::logging::Logger;
-use crate::models::UserRole;
-use serde_json::Value;
-use wasm_bindgen::JsValue;
 
-pub async fn handle_upload_init(mut req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
-    logger.info("Handling upload initialization request", None);
+pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
+    let config = &ctx.data;
+    let env = &ctx.env;
+    let logger = Logger::new(utils::generate_request_id());
 
-    let body = req.json::<Value>().await.map_err(|e| {
-        logger.error(&format!("Failed to parse JSON: {:?}", e), None);
-        AppError::BadRequest("Invalid JSON data".to_string())
-    })?;
+    logger.info("Handling upload initialization", None);
 
-    logger.info("Request body", Some(body.clone()));
+    let body: serde_json::Value = req.json().await?;
+    let file_name = body["fileName"].as_str().ok_or(AppError::BadRequest("Missing fileName".into()))?;
+    let total_size: u64 = body["totalSize"].as_u64().ok_or(AppError::BadRequest("Invalid totalSize".into()))?;
+    let user_role = body["userRole"].as_str().ok_or(AppError::BadRequest("Missing userRole".into()))?;
+    let content_type = body["contentType"].as_str().ok_or(AppError::BadRequest("Missing contentType".into()))?;
 
-    let user_id = body["userId"].as_str().ok_or_else(|| AppError::BadRequest("Missing userId".to_string()))?.to_string();
-    let user_role = parse_user_role(&body["userRole"])?;
-    let content_type = body["contentType"].as_str().ok_or_else(|| AppError::BadRequest("Missing contentType".to_string()))?.to_string();
+    if total_size > config.max_file_size {
+        logger.warn("File size exceeds maximum allowed", Some(json!({
+            "size": total_size,
+            "max_size": config.max_file_size
+        })));
+        return Err(AppError::FileTooLarge("File size exceeds maximum allowed".into()).into());
+    }
 
-    let mut new_body = body.clone();
-    new_body["userId"] = serde_json::Value::String(user_id);
-    new_body["userRole"] = serde_json::Value::String(format!("{:?}", user_role));
-    new_body["contentType"] = serde_json::Value::String(content_type);
+    let upload_id = utils::generate_unique_identifier();
 
-    let new_req = create_new_request(req.url()?.as_str(), &new_body)?;
-
-    forward_to_durable_object(new_req, &env, config, logger).await
-}
-
-pub async fn handle_upload_chunk(req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
-    logger.info("Handling chunk upload request", None);
-    forward_to_durable_object(req, &env, config, logger).await
-}
-
-pub async fn handle_get_progress(req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
-    logger.info("Handling progress check request", None);
-    forward_to_durable_object(req, &env, config, logger).await
-}
-
-pub async fn handle_cancel_upload(req: Request, env: Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
-    logger.info("Handling upload cancellation request", None);
-    forward_to_durable_object(req, &env, config, logger).await
-}
-
-pub async fn handle_health_check(_req: Request, _ctx: RouteContext<Arc<Config>>, logger: &Logger) -> Result<Response> {
-    logger.info("Handling health check request", None);
-    utils::json_response(&serde_json::json!({"status": "healthy"}))
-}
-
-async fn forward_to_durable_object(req: Request, env: &Env, config: &Arc<Config>, logger: &Logger) -> Result<Response> {
     let durable = env.durable_object(&config.durable_object_name)?;
-    let id = durable.id_from_name(&config.tracker_name)?;
+    let id = durable.id_from_name(&upload_id)?;
     let stub = id.get_stub()?;
 
-    match stub.fetch_with_request(req).await {
-        Ok(resp) => Ok(resp),
-        Err(e) => {
-            logger.error(&format!("Error forwarding request to Durable Object: {:?}", e), None);
-            Err(AppError::Internal("Failed to process request".to_string()).into())
-        }
-    }
+    let init_data = json!({
+        "action": "initiate",
+        "uploadId": upload_id,
+        "fileName": file_name,
+        "totalSize": total_size,
+        "userRole": user_role,
+        "contentType": content_type,
+    });
+
+    logger.info("Initiating upload", Some(json!({ "uploadId": upload_id })));
+    stub.fetch_with_str(&serde_json::to_string(&init_data)?).await
 }
 
-fn parse_user_role(value: &Value) -> Result<UserRole> {
-    match value.as_str().ok_or_else(|| AppError::BadRequest("Missing userRole".to_string()))? {
-        "Creator" => Ok(UserRole::Creator),
-        "Member" => Ok(UserRole::Member),
-        "Subscriber" => Ok(UserRole::Subscriber),
-        _ => Err(AppError::BadRequest("Invalid userRole".to_string()).into()),
-    }
-}
+pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
+    let config = &ctx.data;
+    let upload_id = ctx.param("id").ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+    let chunk_index: u16 = req.headers()
+        .get("X-Chunk-Index")?
+        .ok_or(AppError::BadRequest("Missing X-Chunk-Index header".into()))?
+        .parse()
+        .map_err(|_| AppError::BadRequest("Invalid X-Chunk-Index header".into()))?;
 
-fn create_new_request(url: &str, body: &Value) -> Result<Request> {
+    let durable = ctx.env.durable_object(&config.durable_object_name)?;
+    let id = durable.id_from_name(upload_id)?;
+    let stub = id.get_stub()?;
+
+    let chunk_data = req.bytes().await?;
+    let etag = utils::calculate_etag(&chunk_data);
+
+    let chunk_info = json!({
+        "action": "uploadChunk",
+        "uploadId": upload_id,
+        "chunkIndex": chunk_index,
+        "etag": etag,
+    });
+
     let mut headers = Headers::new();
     headers.set("Content-Type", "application/json")?;
 
-    Request::new_with_init(
-        url,
-        RequestInit::new()
-            .with_method(Method::Post)
-            .with_headers(headers)
-            .with_body(Some(JsValue::from_str(&serde_json::to_string(body)?)))
-    )
+    // 构造请求并发送
+    let mut req_init = RequestInit::new();
+    req_init.with_method(Method::Post)
+        .with_body(Some(serde_json::to_string(&chunk_info)?.into()))
+        .with_headers(headers);
+
+    let request = Request::new_with_init("", &req_init)?;
+    stub.fetch_with_request(request).await
+}
+
+pub async fn handle_complete_upload(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
+    let config = &ctx.data;
+    let upload_id = ctx.param("id").ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+    let body: serde_json::Value = req.json().await?;
+
+    let durable = ctx.env.durable_object(&config.durable_object_name)?;
+    let id = durable.id_from_name(upload_id)?;
+    let stub = id.get_stub()?;
+
+    let complete_data = json!({
+        "action": "complete",
+        "uploadId": upload_id,
+        "parts": body["parts"],
+    });
+
+    stub.fetch_with_str(&serde_json::to_string(&complete_data)?).await
+}
+
+pub async fn handle_get_upload_status(_req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
+    let config = &ctx.data;
+    let upload_id = ctx.param("id").ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+
+    let durable = ctx.env.durable_object(&config.durable_object_name)?;
+    let id = durable.id_from_name(upload_id)?;
+    let stub = id.get_stub()?;
+
+    let status_data = json!({
+        "action": "getStatus",
+        "uploadId": upload_id,
+    });
+
+    stub.fetch_with_str(&serde_json::to_string(&status_data)?).await
+}
+
+pub async fn handle_cancel_upload(_req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
+    let config = &ctx.data;
+    let upload_id = ctx.param("id").ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+
+    let durable = ctx.env.durable_object(&config.durable_object_name)?;
+    let id = durable.id_from_name(upload_id)?;
+    let stub = id.get_stub()?;
+
+    let cancel_data = json!({
+        "action": "cancel",
+        "uploadId": upload_id,
+    });
+
+    stub.fetch_with_str(&serde_json::to_string(&cancel_data)?).await
+}
+
+pub async fn handle_health_check(_req: Request, _ctx: RouteContext<Arc<Config>>) -> Result<Response> {
+    utils::json_response(&json!({"status": "healthy"}))
 }
