@@ -2,7 +2,7 @@ use worker::*;
 use std::sync::Arc;
 use crate::config::Config;
 use crate::errors::AppError;
-use crate::utils;
+use crate::{cors, utils};
 use serde_json::json;
 use crate::logging::Logger;
 
@@ -43,7 +43,18 @@ pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>
     });
 
     logger.info("Initiating upload", Some(json!({ "uploadId": upload_id })));
-    stub.fetch_with_str(&serde_json::to_string(&init_data)?).await
+
+    let serialized_data = serde_json::to_string(&init_data).map_err(|e| {
+        logger.error("Failed to serialize init_data", Some(json!({ "error": format!("{:?}", e) })));
+        AppError::Internal("Failed to serialize init_data".into())
+    })?;
+
+    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
+        logger.error("Failed to fetch durable object", Some(json!({ "error": format!("{:?}", e) })));
+        worker::Error::RustError(format!("Failed to fetch durable object: {:?}", e))
+    })?;
+
+    cors::add_cors_headers(response)
 }
 
 pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
@@ -72,14 +83,17 @@ pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>
     let mut headers = Headers::new();
     headers.set("Content-Type", "application/json")?;
 
-    // 构造请求并发送
     let mut req_init = RequestInit::new();
     req_init.with_method(Method::Post)
         .with_body(Some(serde_json::to_string(&chunk_info)?.into()))
         .with_headers(headers);
 
     let request = Request::new_with_init("", &req_init)?;
-    stub.fetch_with_request(request).await
+    let response = stub.fetch_with_request(request).await.map_err(|e| {
+        worker::Error::RustError(format!("Failed to fetch with request: {:?}", e))
+    })?;
+
+    cors::add_cors_headers(response)
 }
 
 pub async fn handle_complete_upload(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
@@ -97,7 +111,15 @@ pub async fn handle_complete_upload(mut req: Request, ctx: RouteContext<Arc<Conf
         "parts": body["parts"],
     });
 
-    stub.fetch_with_str(&serde_json::to_string(&complete_data)?).await
+    let serialized_data = serde_json::to_string(&complete_data).map_err(|e| {
+        worker::Error::RustError(format!("Failed to serialize complete_data: {:?}", e))
+    })?;
+
+    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
+        worker::Error::RustError(format!("Failed to fetch with complete_data: {:?}", e))
+    })?;
+
+    cors::add_cors_headers(response)
 }
 
 pub async fn handle_get_upload_status(_req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
@@ -113,7 +135,15 @@ pub async fn handle_get_upload_status(_req: Request, ctx: RouteContext<Arc<Confi
         "uploadId": upload_id,
     });
 
-    stub.fetch_with_str(&serde_json::to_string(&status_data)?).await
+    let serialized_data = serde_json::to_string(&status_data).map_err(|e| {
+        worker::Error::RustError(format!("Failed to serialize status_data: {:?}", e))
+    })?;
+
+    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
+        worker::Error::RustError(format!("Failed to fetch with status_data: {:?}", e))
+    })?;
+
+    cors::add_cors_headers(response)
 }
 
 pub async fn handle_cancel_upload(_req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
@@ -129,7 +159,15 @@ pub async fn handle_cancel_upload(_req: Request, ctx: RouteContext<Arc<Config>>)
         "uploadId": upload_id,
     });
 
-    stub.fetch_with_str(&serde_json::to_string(&cancel_data)?).await
+    let serialized_data = serde_json::to_string(&cancel_data).map_err(|e| {
+        worker::Error::RustError(format!("Failed to serialize cancel_data: {:?}", e))
+    })?;
+
+    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
+        worker::Error::RustError(format!("Failed to fetch with cancel_data: {:?}", e))
+    })?;
+
+    cors::add_cors_headers(response)
 }
 
 pub async fn handle_health_check(_req: Request, _ctx: RouteContext<Arc<Config>>) -> Result<Response> {
