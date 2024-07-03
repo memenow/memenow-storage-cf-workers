@@ -6,8 +6,9 @@ use crate::utils;
 use serde_json::json;
 use crate::logging::Logger;
 use std::str::FromStr;
+use async_trait::async_trait;
 
-#[durable_object]
+// Define the struct for the UploadTracker Durable Object
 pub struct UploadTracker {
     state: State,
     env: Env,
@@ -15,8 +16,9 @@ pub struct UploadTracker {
     logger: Logger,
 }
 
-#[durable_object]
+#[async_trait(?Send)]
 impl DurableObject for UploadTracker {
+    // Implement the `new` function to initialize the object
     fn new(state: State, env: Env) -> Self {
         Self {
             state,
@@ -26,25 +28,35 @@ impl DurableObject for UploadTracker {
         }
     }
 
+    // Implement the `fetch` function to handle requests
     async fn fetch(&mut self, mut req: Request) -> Result<Response> {
+        self.logger.info("Durable Object received request", Some(json!({
+            "method": req.method().to_string(),
+            "url": req.url().map(|u| u.to_string()).unwrap_or_else(|_| "Invalid URL".to_string()),
+        })));
+
+        // Load the configuration if it hasn't been loaded yet
         if self.config == Config::default() {
             self.config = Config::load(&self.env).await?;
         }
 
+        // Parse the request body as JSON
         let body: serde_json::Value = req.json().await?;
         let action = body["action"].as_str().ok_or(AppError::BadRequest("Missing action".into()))?;
 
         self.logger.info("Processing request", Some(json!({ "action": action })));
 
+        // Match the action and call the corresponding method
         let result = match action {
             "initiate" => self.initiate_multipart_upload(&body).await,
-            "uploadChunk" => self.handle_chunk_upload(&body, req).await,
+            "uploadChunk" => self.handle_chunk_upload(&body, req).await, // Pass `req` as mutable
             "complete" => self.complete_multipart_upload(&body).await,
             "getStatus" => self.get_upload_status(&body).await,
             "cancel" => self.cancel_upload(&body).await,
             _ => Err(AppError::BadRequest("Invalid action".into()).into()),
         };
 
+        // Log any errors that occur during processing
         if let Err(ref e) = result {
             self.logger.error("Error processing request", Some(json!({ "error": e.to_string() })));
         }
@@ -59,7 +71,6 @@ impl UploadTracker {
         let file_name = body["fileName"].as_str().ok_or(AppError::BadRequest("Missing fileName".into()))?;
         let total_size: u64 = body["totalSize"].as_u64().ok_or(AppError::BadRequest("Invalid totalSize".into()))?;
         let user_role_str = body["userRole"].as_str().ok_or(AppError::BadRequest("Missing userRole".into()))?;
-        let user_id = body["userId"].as_str().ok_or(AppError::BadRequest("Missing userId".into()))?;
         let content_type = body["contentType"].as_str().ok_or(AppError::BadRequest("Missing contentType".into()))?;
 
         let user_role = UserRole::from_str(user_role_str).map_err(|e| AppError::BadRequest(e))?;
@@ -71,12 +82,12 @@ impl UploadTracker {
             return Err(AppError::Unauthorized("User does not have upload permission".into()).into());
         }
 
-        let key = utils::generate_r2_key(&self.config, &user_role, user_id, content_type, file_name);
+        let key = utils::generate_r2_key(&self.config, &user_role, upload_id, content_type, file_name);
         self.logger.info("Initiating multipart upload", Some(json!({
             "uploadId": upload_id,
             "fileName": file_name,
             "totalSize": total_size,
-            "userRole": user_role,
+            "userRole": user_role_str,
             "contentType": content_type
         })));
 
@@ -98,7 +109,7 @@ impl UploadTracker {
             MultipartUploadState::InProgress(r2_upload_id.clone()),
             Vec::new(),
             key.clone(),
-            user_id.to_string(),
+            upload_id.to_string(),
         );
 
         self.state.storage().put("metadata", &metadata).await?;

@@ -2,6 +2,7 @@ use worker::*;
 use serde_json::json;
 use chrono::Utc;
 
+#[derive(Clone)]
 pub struct Logger {
     request_id: String,
 }
