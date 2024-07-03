@@ -2,7 +2,6 @@
 name = "memenow-storage-cf-workers"
 version = "0.1.0"
 edition = "2021"
-authors = [ "billduke13.eth <billduke13_eth@pm.me>" ]
 
 [package.metadata.release]
 release = false

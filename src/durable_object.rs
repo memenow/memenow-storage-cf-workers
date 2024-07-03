@@ -1,12 +1,11 @@
 use worker::*;
-use std::collections::HashMap;
-use crate::models::{UploadProgress, UserRole};
+use crate::models::{UploadMetadata, MultipartUploadState, UserRole};
 use crate::errors::AppError;
-use crate::utils;
 use crate::config::Config;
+use crate::utils;
+use serde_json::json;
 use crate::logging::Logger;
-use sha2::{Sha256, Digest};
-use serde_json::Value;
+use std::str::FromStr;
 
 #[durable_object]
 pub struct UploadTracker {
@@ -23,207 +22,186 @@ impl DurableObject for UploadTracker {
             state,
             env,
             config: Config::default(),
-            logger: Logger::new("UploadTracker".to_string()),
+            logger: Logger::new(utils::generate_request_id()),
         }
     }
 
-    async fn fetch(&mut self, req: Request) -> Result<Response> {
+    async fn fetch(&mut self, mut req: Request) -> Result<Response> {
         if self.config == Config::default() {
             self.config = Config::load(&self.env).await?;
         }
 
-        let url = req.url()?;
-        let path = url.path();
+        let body: serde_json::Value = req.json().await?;
+        let action = body["action"].as_str().ok_or(AppError::BadRequest("Missing action".into()))?;
 
-        match (req.method(), path) {
-            (Method::Post, "/v1/uploads/init") => self.init_upload(req).await,
-            (Method::Post, "/v1/uploads/chunk") => self.upload_chunk(req).await,
-            (Method::Get, "/v1/uploads") => self.get_progress(req).await,
-            (Method::Delete, "/v1/uploads") => self.cancel_upload(req).await,
-            _ => Err(AppError::NotFound("Route not found".to_string()).into()),
+        self.logger.info("Processing request", Some(json!({ "action": action })));
+
+        let result = match action {
+            "initiate" => self.initiate_multipart_upload(&body).await,
+            "uploadChunk" => self.handle_chunk_upload(&body, req).await,
+            "complete" => self.complete_multipart_upload(&body).await,
+            "getStatus" => self.get_upload_status(&body).await,
+            "cancel" => self.cancel_upload(&body).await,
+            _ => Err(AppError::BadRequest("Invalid action".into()).into()),
+        };
+
+        if let Err(ref e) = result {
+            self.logger.error("Error processing request", Some(json!({ "error": e.to_string() })));
         }
+
+        result
     }
 }
 
 impl UploadTracker {
-    async fn init_upload(&self, mut req: Request) -> Result<Response> {
-        let body: Value = req.json().await?;
-        let file_name = body["fileName"].as_str()
-            .ok_or_else(|| AppError::BadRequest("Missing fileName".to_string()))?;
-        let total_size: usize = body["totalSize"].as_u64()
-            .ok_or_else(|| AppError::BadRequest("Invalid totalSize".to_string()))? as usize;
-        let user_id = body["userId"].as_str()
-            .ok_or_else(|| AppError::BadRequest("Missing userId".to_string()))?;
-        let user_role = parse_user_role(&body["userRole"])?;
-        let content_type = body["contentType"].as_str()
-            .ok_or_else(|| AppError::BadRequest("Missing contentType".to_string()))?;
+    async fn initiate_multipart_upload(&self, body: &serde_json::Value) -> Result<Response> {
+        let upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+        let file_name = body["fileName"].as_str().ok_or(AppError::BadRequest("Missing fileName".into()))?;
+        let total_size: u64 = body["totalSize"].as_u64().ok_or(AppError::BadRequest("Invalid totalSize".into()))?;
+        let user_role_str = body["userRole"].as_str().ok_or(AppError::BadRequest("Missing userRole".into()))?;
+        let user_id = body["userId"].as_str().ok_or(AppError::BadRequest("Missing userId".into()))?;
+        let content_type = body["contentType"].as_str().ok_or(AppError::BadRequest("Missing contentType".into()))?;
 
-        let upload_id = utils::generate_unique_id();
-        let chunk_size = self.calculate_chunk_size(total_size);
+        let user_role = UserRole::from_str(user_role_str).map_err(|e| AppError::BadRequest(e))?;
+        if !self.config.is_role_allowed(&user_role) {
+            return Err(AppError::Unauthorized("Invalid user role".into()).into());
+        }
 
-        let progress = UploadProgress::new(
+        if !self.config.has_permission(&user_role, "upload") {
+            return Err(AppError::Unauthorized("User does not have upload permission".into()).into());
+        }
+
+        let key = utils::generate_r2_key(&self.config, &user_role, user_id, content_type, file_name);
+        self.logger.info("Initiating multipart upload", Some(json!({
+            "uploadId": upload_id,
+            "fileName": file_name,
+            "totalSize": total_size,
+            "userRole": user_role,
+            "contentType": content_type
+        })));
+
+        if total_size > self.config.max_file_size {
+            return Err(AppError::FileTooLarge("File size exceeds maximum allowed".into()).into());
+        }
+
+        let r2 = self.env.bucket(&self.config.bucket_name)?;
+
+        let multipart_upload = r2.create_multipart_upload(&key).execute().await?;
+        let r2_upload_id = multipart_upload.upload_id().await;
+
+        let metadata = UploadMetadata::new(
             file_name.to_string(),
             total_size,
-            upload_id.clone(),
-            chunk_size,
-            user_id.to_string(),
-            user_role,
+            upload_id.to_string(),
+            user_role.as_str().to_string(),
             content_type.to_string(),
+            MultipartUploadState::InProgress(r2_upload_id.clone()),
+            Vec::new(),
+            key.clone(),
+            user_id.to_string(),
         );
-        self.state.storage().put(&upload_id, progress).await?;
 
-        utils::json_response(&serde_json::json!({
+        self.state.storage().put("metadata", &metadata).await?;
+
+        utils::json_response(&json!({
+            "message": "Multipart upload initiated",
             "uploadId": upload_id,
-            "chunkSize": chunk_size,
+            "r2UploadId": r2_upload_id,
+            "key": key,
         }))
     }
 
-    async fn upload_chunk(&mut self, mut req: Request) -> Result<Response> {
-        let form_data = req.form_data().await?;
-        let upload_id = self.extract_form_field(&form_data, "uploadId")?;
-        let chunk_index: usize = self.extract_form_field(&form_data, "chunkIndex")?
-            .parse()
-            .map_err(|e| AppError::BadRequest(format!("Invalid chunk index: {}", e)))?;
+    async fn handle_chunk_upload(&self, body: &serde_json::Value, mut req: Request) -> Result<Response> {
+        let _upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+        let chunk_index: u16 = body["chunkIndex"].as_u64().ok_or(AppError::BadRequest("Invalid chunkIndex".into()))? as u16;
+        let etag = body["etag"].as_str().ok_or(AppError::BadRequest("Missing etag".into()))?;
 
-        let mut progress = self.state.storage().get::<UploadProgress>(&upload_id).await?;
+        let metadata: Option<UploadMetadata> = self.state.storage().get("metadata").await?;
+        let mut metadata = metadata.ok_or(AppError::NotFound("Upload not found".into()))?;
 
-        let chunk = progress.chunks.get(chunk_index)
-            .ok_or_else(|| AppError::BadRequest("Invalid chunk index".to_string()))?;
-
-        let chunk_data = match form_data.get("file") {
-            Some(FormEntry::File(file)) => file.bytes().await?,
-            _ => return Err(AppError::BadRequest("Invalid file part".to_string()).into()),
+        let _r2_upload_id = match &metadata.multipart_upload_state {
+            MultipartUploadState::InProgress(id) => id,
+            _ => return Err(AppError::BadRequest("Invalid upload state".into()).into()),
         };
 
-        if chunk_data.len() > 128 * 1024 {
-            return Err(AppError::BadRequest("Chunk size exceeds limit".to_string()).into());
+        let r2 = self.env.bucket(&self.config.bucket_name)?;
+        let key = format!("{}/{}/{}", metadata.user_role, metadata.content_type, metadata.file_name);
+
+        let chunk_data = req.bytes().await?;
+        let part = r2.put(&format!("{}_chunk_{}", key, chunk_index), chunk_data).execute().await?;
+
+        if part.etag() != etag {
+            return Err(AppError::BadRequest("ETag mismatch".into()).into());
         }
 
-        if chunk_data.len() != (chunk.end - chunk.start) {
-            return Err(AppError::BadRequest("Chunk size mismatch".to_string()).into());
-        }
+        metadata.chunks.push(chunk_index);
+        self.state.storage().put("metadata", &metadata).await?;
 
-        let key = format!("{}_chunk_{}", upload_id, chunk_index);
-        self.state.storage().put(&key, chunk_data).await?;
-
-        progress.update_chunk(chunk_index);
-        self.state.storage().put(&upload_id, &progress).await?;
-
-        let is_complete = progress.is_complete();
-        if is_complete {
-            self.combine_chunks(&progress).await?;
-        }
-
-        utils::json_response(&serde_json::json!({
+        utils::json_response(&json!({
             "message": "Chunk uploaded successfully",
-            "isComplete": is_complete,
+            "chunkIndex": chunk_index,
+            "etag": etag,
         }))
     }
 
-    async fn get_progress(&self, req: Request) -> Result<Response> {
-        let url = req.url()?;
-        let query_params = utils::parse_query_string(&url);
-        let upload_id = query_params.get("uploadId")
-            .ok_or_else(|| AppError::BadRequest("No upload ID in query".to_string()))?;
+    async fn complete_multipart_upload(&self, body: &serde_json::Value) -> Result<Response> {
+        let upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+        let _parts = body["parts"].as_array().ok_or(AppError::BadRequest("Missing parts".into()))?;
 
-        let progress = self.state.storage().get::<UploadProgress>(upload_id).await?;
+        let metadata: Option<UploadMetadata> = self.state.storage().get("metadata").await?;
+        let mut metadata = metadata.ok_or(AppError::NotFound("Upload not found".into()))?;
 
-        utils::json_response(&progress)
-    }
+        let _r2_upload_id = match metadata.multipart_upload_state {
+            MultipartUploadState::InProgress(id) => id,
+            _ => return Err(AppError::BadRequest("Invalid upload state".into()).into()),
+        };
 
-    async fn cancel_upload(&mut self, req: Request) -> Result<Response> {
-        let url = req.url()?;
-        let query_params = utils::parse_query_string(&url);
-        let upload_id = query_params.get("uploadId")
-            .ok_or_else(|| AppError::BadRequest("No upload ID in query".to_string()))?;
+        let r2 = self.env.bucket(&self.config.bucket_name)?;
+        let key = format!("{}/{}/{}", metadata.user_role, metadata.content_type, metadata.file_name);
 
-        let progress = self.state.storage().get::<UploadProgress>(upload_id).await?;
-
-        for chunk in &progress.chunks {
-            let key = format!("{}_chunk_{}", upload_id, chunk.index);
-            self.state.storage().delete(&key).await?;
+        let mut combined_data = Vec::new();
+        for chunk_index in &metadata.chunks {
+            let chunk_key = format!("{}_chunk_{}", key, chunk_index);
+            let chunk = r2.get(&chunk_key).execute().await?.ok_or(AppError::NotFound("Chunk not found".into()))?;
+            let chunk_data = chunk.body().ok_or(AppError::NotFound("Chunk body not found".into()))?.bytes().await?;
+            combined_data.extend_from_slice(&chunk_data);
+            r2.delete(&chunk_key).await?;
         }
 
-        self.state.storage().delete(upload_id).await?;
+        r2.put(&key, combined_data).execute().await?;
 
-        self.logger.info(&format!("Upload cancelled for ID: {}", upload_id), None);
-        utils::json_response(&serde_json::json!({"message": "Upload cancelled successfully"}))
+        metadata.multipart_upload_state = MultipartUploadState::Completed;
+        self.state.storage().put("metadata", &metadata).await?;
+
+        utils::json_response(&json!({
+            "message": "Multipart upload completed successfully",
+            "uploadId": upload_id,
+        }))
     }
 
-    async fn combine_chunks(&self, progress: &UploadProgress) -> Result<()> {
-        self.logger.info(&format!("Combining chunks for file: {}", progress.file_name), None);
-
-        let bucket = self.env.bucket(&self.config.bucket_name)?;
-        let mut hasher = Sha256::new();
-        let full_file = self.collect_chunks(progress, &mut hasher).await?;
-
-        let checksum = hasher.finalize();
-        let mut metadata = HashMap::new();
-        metadata.insert("checksum".to_string(), hex::encode(checksum));
-
-        let unique_id = utils::generate_unique_id();
-        let r2_key = self.create_r2_key(progress, &unique_id);
-
-        bucket.put(&r2_key, full_file)
-            .custom_metadata(metadata)
-            .execute()
-            .await?;
-
-        self.state.storage().delete(&progress.upload_id).await?;
-
-        self.logger.info(&format!("File {} successfully combined and stored as {}", progress.file_name, r2_key), None);
-        Ok(())
+    async fn get_upload_status(&self, body: &serde_json::Value) -> Result<Response> {
+        let _upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+        let metadata: Option<UploadMetadata> = self.state.storage().get("metadata").await?;
+        let metadata = metadata.ok_or(AppError::NotFound("Upload not found".into()))?;
+        utils::json_response(&metadata)
     }
 
-    async fn collect_chunks(&self, progress: &UploadProgress, hasher: &mut Sha256) -> Result<Vec<u8>> {
-        let mut full_file = Vec::with_capacity(progress.total_size);
+    async fn cancel_upload(&mut self, body: &serde_json::Value) -> Result<Response> {
+        let _upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+        let metadata: Option<UploadMetadata> = self.state.storage().get("metadata").await?;
+        let metadata = metadata.ok_or(AppError::NotFound("Upload not found".into()))?;
 
-        for chunk in &progress.chunks {
-            let key = format!("{}_chunk_{}", progress.upload_id, chunk.index);
-            let chunk_data = self.state.storage().get::<Vec<u8>>(&key).await?;
-
-            full_file.extend_from_slice(&chunk_data);
-            hasher.update(&chunk_data);
-
-            self.state.storage().delete(&key).await?;
+        if let MultipartUploadState::InProgress(_) = metadata.multipart_upload_state {
+            let r2 = self.env.bucket(&self.config.bucket_name)?;
+            let key = format!("{}/{}/{}", metadata.user_role, metadata.content_type, metadata.file_name);
+            for chunk_index in &metadata.chunks {
+                let chunk_key = format!("{}_chunk_{}", key, chunk_index);
+                r2.delete(&chunk_key).await?;
+            }
         }
 
-        Ok(full_file)
-    }
+        self.state.storage().delete("metadata").await?;
 
-    fn create_r2_key(&self, progress: &UploadProgress, unique_id: &str) -> String {
-        format!("{}/{}/{}/{}_{}",
-                match progress.user_role {
-                    UserRole::Creator => "creators",
-                    UserRole::Member => "members",
-                    UserRole::Subscriber => "subscribers",
-                },
-                progress.user_id,
-                progress.content_type,
-                unique_id,
-                progress.file_name
-        )
-    }
-
-    fn calculate_chunk_size(&self, total_size: usize) -> usize {
-        let chunk_count = (total_size as f64 / self.config.min_chunk_size as f64).ceil() as usize;
-        let chunk_size = total_size / chunk_count;
-        chunk_size.clamp(self.config.min_chunk_size, self.config.max_chunk_size)
-    }
-
-    fn extract_form_field(&self, form_data: &FormData, field: &str) -> Result<String> {
-        match form_data.get(field) {
-            Some(FormEntry::Field(value)) => Ok(value),
-            _ => Err(AppError::BadRequest(format!("Invalid {} field", field)).into()),
-        }
-    }
-}
-
-fn parse_user_role(value: &Value) -> Result<UserRole> {
-    match value.as_str().ok_or_else(|| AppError::BadRequest("Missing userRole".to_string()))? {
-        "Creator" => Ok(UserRole::Creator),
-        "Member" => Ok(UserRole::Member),
-        "Subscriber" => Ok(UserRole::Subscriber),
-        _ => Err(AppError::BadRequest("Invalid userRole".to_string()).into()),
+        utils::json_response(&json!({"message": "Upload cancelled successfully"}))
     }
 }
