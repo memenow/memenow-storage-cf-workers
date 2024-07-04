@@ -1,20 +1,19 @@
 use worker::*;
 
 mod config;
-mod errors;
-mod models;
-mod handlers;
-mod durable_object;
-mod utils;
-mod logging;
 mod cors;
-
-use crate::durable_object::UploadTracker;
+mod durable_object;
+mod errors;
+mod handlers;
+mod logging;
+mod models;
+mod utils;
 
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     utils::set_panic_hook();
 
+    // Handle CORS preflight requests
     if req.method() == Method::Options {
         return cors::handle_cors_preflight();
     }
@@ -38,14 +37,14 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
 #[durable_object]
 pub struct UploadTrackerObject {
-    upload_tracker: UploadTracker,
+    upload_tracker: durable_object::UploadTracker,
 }
 
 #[durable_object]
 impl DurableObject for UploadTrackerObject {
     fn new(state: State, env: Env) -> Self {
         Self {
-            upload_tracker: UploadTracker::new(state, env),
+            upload_tracker: durable_object::UploadTracker::new(state, env),
         }
     }
 
