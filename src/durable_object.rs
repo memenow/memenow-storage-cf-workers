@@ -6,6 +6,8 @@ use crate::utils;
 use serde_json::json;
 use crate::logging::Logger;
 use std::str::FromStr;
+use crate::cors;
+use base64;
 
 #[durable_object]
 pub struct UploadTracker {
@@ -31,14 +33,15 @@ impl DurableObject for UploadTracker {
             self.config = Config::load(&self.env).await?;
         }
 
-        let body: serde_json::Value = req.json().await?;
+        let body = req.text().await?;
+        let body: serde_json::Value = serde_json::from_str(&body)?;
         let action = body["action"].as_str().ok_or(AppError::BadRequest("Missing action".into()))?;
 
         self.logger.info("Processing request", Some(json!({ "action": action })));
 
         let result = match action {
             "initiate" => self.initiate_multipart_upload(&body).await,
-            "uploadChunk" => self.handle_chunk_upload(&body, req).await,
+            "uploadChunk" => self.handle_chunk_upload(&body).await,
             "complete" => self.complete_multipart_upload(&body).await,
             "getStatus" => self.get_upload_status(&body).await,
             "cancel" => self.cancel_upload(&body).await,
@@ -49,7 +52,7 @@ impl DurableObject for UploadTracker {
             self.logger.error("Error processing request", Some(json!({ "error": e.to_string() })));
         }
 
-        result
+        result.and_then(|response| cors::add_cors_headers(response))
     }
 }
 
@@ -110,10 +113,10 @@ impl UploadTracker {
             "key": key,
         }))
     }
-
-    async fn handle_chunk_upload(&self, body: &serde_json::Value, mut req: Request) -> Result<Response> {
-        let _upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+    async fn handle_chunk_upload(&self, body: &serde_json::Value) -> Result<Response> {
+        let upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
         let chunk_index: u16 = body["chunkIndex"].as_u64().ok_or(AppError::BadRequest("Invalid chunkIndex".into()))? as u16;
+        let chunk_data = body["chunkData"].as_str().ok_or(AppError::BadRequest("Missing chunkData".into()))?;
         let etag = body["etag"].as_str().ok_or(AppError::BadRequest("Missing etag".into()))?;
 
         let metadata: Option<UploadMetadata> = self.state.storage().get("metadata").await?;
@@ -127,7 +130,9 @@ impl UploadTracker {
         let r2 = self.env.bucket(&self.config.bucket_name)?;
         let key = format!("{}/{}/{}", metadata.user_role, metadata.content_type, metadata.file_name);
 
-        let chunk_data = req.bytes().await?;
+        // Decode base64 chunk data
+        let chunk_data = base64::decode(chunk_data).map_err(|_| AppError::BadRequest("Invalid chunk data".into()))?;
+
         let part = r2.put(&format!("{}_chunk_{}", key, chunk_index), chunk_data).execute().await?;
 
         if part.etag() != etag {
@@ -180,10 +185,24 @@ impl UploadTracker {
     }
 
     async fn get_upload_status(&self, body: &serde_json::Value) -> Result<Response> {
-        let _upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+        let upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
+
         let metadata: Option<UploadMetadata> = self.state.storage().get("metadata").await?;
         let metadata = metadata.ok_or(AppError::NotFound("Upload not found".into()))?;
-        utils::json_response(&metadata)
+
+        let status = json!({
+            "uploadId": metadata.upload_id,
+            "fileName": metadata.file_name,
+            "totalSize": metadata.total_size,
+            "uploadedChunks": metadata.chunks,
+            "status": match metadata.multipart_upload_state {
+                MultipartUploadState::NotStarted => "not_started",
+                MultipartUploadState::InProgress(_) => "in_progress",
+                MultipartUploadState::Completed => "completed",
+            },
+        });
+
+        utils::json_response(&status)
     }
 
     async fn cancel_upload(&mut self, body: &serde_json::Value) -> Result<Response> {

@@ -16,16 +16,22 @@ pub fn generate_r2_key(config: &Config, user_role: &UserRole, user_id: &str, con
 
     let unique_id = generate_unique_identifier();
 
-    let mut key = config.path_format.clone();
-    key = key.replace("{role}", &role);
-    key = key.replace("{user_id}", user_id);
-    key = key.replace("{date}", &date);
-    key = key.replace("{content_type}", content_category);
-    key = key.replace("{unique_id}", &unique_id);
-    key = key.replace("{extension}", file_extension);
-    key = key.replace("{file_name}", file_stem);
+    let base_path = match user_role {
+        UserRole::Creator => "creator",
+        UserRole::Member => "member",
+        UserRole::Subscriber => "subscriber",
+    };
 
-    key
+    format!(
+        "{}/{}/{}/{}/{}/{}.{}",
+        base_path,
+        user_id,
+        date,
+        content_category,
+        unique_id,
+        file_stem,
+        file_extension
+    )
 }
 
 pub fn generate_unique_identifier() -> String {
@@ -37,7 +43,7 @@ pub fn set_panic_hook() {
     console_error_panic_hook::set_once();
 }
 
-pub fn json_response<T: serde::Serialize>(data: &T) -> Result<Response> {
+pub fn json_response(data: &serde_json::Value) -> Result<Response> {
     Response::from_json(data)
 }
 

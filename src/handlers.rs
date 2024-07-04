@@ -5,9 +5,11 @@ use crate::errors::AppError;
 use crate::{cors, utils};
 use serde_json::json;
 use crate::logging::Logger;
+use crate::models::UserRole;
+use std::str::FromStr;
 
 pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
-    let config = &ctx.data;
+    let config = &ctx.data();
     let env = &ctx.env;
     let logger = Logger::new(utils::generate_request_id());
 
@@ -18,6 +20,7 @@ pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>
     let total_size: u64 = body["totalSize"].as_u64().ok_or(AppError::BadRequest("Invalid totalSize".into()))?;
     let user_role = body["userRole"].as_str().ok_or(AppError::BadRequest("Missing userRole".into()))?;
     let content_type = body["contentType"].as_str().ok_or(AppError::BadRequest("Missing contentType".into()))?;
+    let user_id = body["userId"].as_str().ok_or(AppError::BadRequest("Missing userId".into()))?;
 
     if total_size > config.max_file_size {
         logger.warn("File size exceeds maximum allowed", Some(json!({
@@ -33,28 +36,31 @@ pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>
     let id = durable.id_from_name(&upload_id)?;
     let stub = id.get_stub()?;
 
+    let user_role = UserRole::from_str(user_role).map_err(|e| AppError::BadRequest(e))?;
+    let r2_key = utils::generate_r2_key(config, &user_role, user_id, content_type, file_name);
+
     let init_data = json!({
         "action": "initiate",
         "uploadId": upload_id,
         "fileName": file_name,
         "totalSize": total_size,
-        "userRole": user_role,
+        "userRole": user_role.as_str(),
         "contentType": content_type,
+        "userId": user_id,
+        "r2Key": r2_key,
     });
 
-    logger.info("Initiating upload", Some(json!({ "uploadId": upload_id })));
+    logger.info("Initiating upload", Some(json!({ "uploadId": upload_id, "r2Key": r2_key })));
 
-    let serialized_data = serde_json::to_string(&init_data).map_err(|e| {
-        logger.error("Failed to serialize init_data", Some(json!({ "error": format!("{:?}", e) })));
-        AppError::Internal("Failed to serialize init_data".into())
-    })?;
+    let mut do_response = stub.fetch_with_str(&serde_json::to_string(&init_data)?).await?;
 
-    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
-        logger.error("Failed to fetch durable object", Some(json!({ "error": format!("{:?}", e) })));
-        worker::Error::RustError(format!("Failed to fetch durable object: {:?}", e))
-    })?;
+    if do_response.status_code() != 200 {
+        let error_message = do_response.text().await?;
+        logger.error("Durable Object returned an error", Some(json!({ "status": do_response.status_code(), "message": error_message })));
+        return Err(AppError::Internal(format!("Durable Object error: {}", error_message)).into());
+    }
 
-    cors::add_cors_headers(response)
+    cors::add_cors_headers(do_response)
 }
 
 pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
