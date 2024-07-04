@@ -10,7 +10,7 @@ use std::str::FromStr;
 use crate::cors;
 
 pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
-    let config = &ctx.data();
+    let config = &ctx.data;
     let env = &ctx.env;
     let logger = Logger::new(utils::generate_request_id());
 
@@ -59,7 +59,7 @@ pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>
         return Err(AppError::Internal(format!("Durable Object error: {}", error_message)).into());
     }
 
-    Ok(do_response)
+    cors::add_cors_headers(do_response)
 }
 
 pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
@@ -83,20 +83,10 @@ pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>
         "uploadId": upload_id,
         "chunkIndex": chunk_index,
         "etag": etag,
+        "chunkData": base64::encode(&chunk_data),
     });
 
-    let mut headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-
-    let mut req_init = RequestInit::new();
-    req_init.with_method(Method::Post)
-        .with_body(Some(serde_json::to_string(&chunk_info)?.into()))
-        .with_headers(headers);
-
-    let request = Request::new_with_init("", &req_init)?;
-    let response = stub.fetch_with_request(request).await.map_err(|e| {
-        worker::Error::RustError(format!("Failed to fetch with request: {:?}", e))
-    })?;
+    let response = stub.fetch_with_str(&chunk_info.to_string()).await?;
 
     cors::add_cors_headers(response)
 }
@@ -116,13 +106,7 @@ pub async fn handle_complete_upload(mut req: Request, ctx: RouteContext<Arc<Conf
         "parts": body["parts"],
     });
 
-    let serialized_data = serde_json::to_string(&complete_data).map_err(|e| {
-        worker::Error::RustError(format!("Failed to serialize complete_data: {:?}", e))
-    })?;
-
-    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
-        worker::Error::RustError(format!("Failed to fetch with complete_data: {:?}", e))
-    })?;
+    let response = stub.fetch_with_str(&complete_data.to_string()).await?;
 
     cors::add_cors_headers(response)
 }
@@ -140,13 +124,7 @@ pub async fn handle_get_upload_status(_req: Request, ctx: RouteContext<Arc<Confi
         "uploadId": upload_id,
     });
 
-    let serialized_data = serde_json::to_string(&status_data).map_err(|e| {
-        worker::Error::RustError(format!("Failed to serialize status_data: {:?}", e))
-    })?;
-
-    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
-        worker::Error::RustError(format!("Failed to fetch with status_data: {:?}", e))
-    })?;
+    let response = stub.fetch_with_str(&status_data.to_string()).await?;
 
     cors::add_cors_headers(response)
 }
@@ -164,13 +142,7 @@ pub async fn handle_cancel_upload(_req: Request, ctx: RouteContext<Arc<Config>>)
         "uploadId": upload_id,
     });
 
-    let serialized_data = serde_json::to_string(&cancel_data).map_err(|e| {
-        worker::Error::RustError(format!("Failed to serialize cancel_data: {:?}", e))
-    })?;
-
-    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
-        worker::Error::RustError(format!("Failed to fetch with cancel_data: {:?}", e))
-    })?;
+    let response = stub.fetch_with_str(&cancel_data.to_string()).await?;
 
     cors::add_cors_headers(response)
 }
