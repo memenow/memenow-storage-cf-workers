@@ -64,26 +64,28 @@ impl UploadTracker {
         let user_role_str = body["userRole"].as_str().ok_or(AppError::BadRequest("Missing userRole".into()))?;
         let user_id = body["userId"].as_str().ok_or(AppError::BadRequest("Missing userId".into()))?;
         let content_type = body["contentType"].as_str().ok_or(AppError::BadRequest("Missing contentType".into()))?;
-        let r2_key = body["r2Key"].as_str().ok_or(AppError::BadRequest("Missing r2Key".into()))?;
-
+    
         let user_role = UserRole::from_str(user_role_str).map_err(|e| AppError::BadRequest(e))?;
-
+    
+        let r2_key = utils::generate_r2_key(&self.config, &user_role, user_id, content_type, file_name);
+    
         self.logger.info("Initiating multipart upload", Some(json!({
             "uploadId": upload_id,
             "fileName": file_name,
             "totalSize": total_size,
             "userRole": user_role,
-            "contentType": content_type
+            "contentType": content_type,
+            "r2Key": r2_key
         })));
-
+    
         let r2 = self.env.bucket(&self.config.bucket_name)?;
-
-        let multipart_upload = r2.create_multipart_upload(r2_key)
+    
+        let multipart_upload = r2.create_multipart_upload(&r2_key)
             .execute()
             .await?;
-
+    
         let r2_upload_id = multipart_upload.upload_id().await;
-
+    
         let metadata = UploadMetadata::new(
             file_name.to_string(),
             total_size,
@@ -92,12 +94,12 @@ impl UploadTracker {
             content_type.to_string(),
             MultipartUploadState::InProgress(r2_upload_id.clone()),
             Vec::new(),
-            r2_key.to_string(),
+            r2_key.clone(),
             user_id.to_string(),
         );
-
+    
         self.state.storage().put("metadata", &metadata).await?;
-
+    
         utils::json_response(&json!({
             "message": "Multipart upload initiated",
             "uploadId": upload_id,
@@ -105,7 +107,7 @@ impl UploadTracker {
             "key": r2_key,
         }))
     }
-
+    
     async fn handle_chunk_upload(&self, body: &serde_json::Value) -> Result<Response> {
         let upload_id = body["uploadId"].as_str().ok_or(AppError::BadRequest("Missing uploadId".into()))?;
         let chunk_index: u16 = body["chunkIndex"].as_u64().ok_or(AppError::BadRequest("Invalid chunkIndex".into()))? as u16;

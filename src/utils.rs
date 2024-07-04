@@ -7,9 +7,7 @@ use worker::*;
 
 pub fn generate_r2_key(config: &Config, user_role: &UserRole, user_id: &str, content_type: &str, file_name: &str) -> String {
     let date = Utc::now().format("%Y%m%d").to_string();
-    let role = user_role.as_str().to_lowercase();
     let content_category = content_type.split('/').next().unwrap_or("unknown");
-
     let file_path = Path::new(file_name);
     let file_stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
     let file_extension = file_path.extension().and_then(|s| s.to_str()).unwrap_or("");
