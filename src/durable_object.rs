@@ -7,7 +7,6 @@ use serde_json::json;
 use crate::logging::Logger;
 use std::str::FromStr;
 use crate::cors;
-use base64;
 
 #[durable_object]
 pub struct UploadTracker {
@@ -32,13 +31,13 @@ impl DurableObject for UploadTracker {
         if self.config == Config::default() {
             self.config = Config::load(&self.env).await?;
         }
-
+    
         let body = req.text().await?;
         let body: serde_json::Value = serde_json::from_str(&body)?;
         let action = body["action"].as_str().ok_or(AppError::BadRequest("Missing action".into()))?;
-
+    
         self.logger.info("Processing request", Some(json!({ "action": action })));
-
+    
         let result = match action {
             "initiate" => self.initiate_multipart_upload(&body).await,
             "uploadChunk" => self.handle_chunk_upload(&body).await,
@@ -47,11 +46,11 @@ impl DurableObject for UploadTracker {
             "cancel" => self.cancel_upload(&body).await,
             _ => Err(AppError::BadRequest("Invalid action".into()).into()),
         };
-
+    
         if let Err(ref e) = result {
             self.logger.error("Error processing request", Some(json!({ "error": e.to_string() })));
         }
-
+    
         result.and_then(|response| cors::add_cors_headers(response))
     }
 }
