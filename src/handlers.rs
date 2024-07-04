@@ -2,13 +2,14 @@ use worker::*;
 use std::sync::Arc;
 use crate::config::Config;
 use crate::errors::AppError;
-use crate::utils;
+use crate::{cors, utils};
 use serde_json::json;
 use crate::logging::Logger;
-use crate::cors;
+use crate::models::UserRole;
+use std::str::FromStr;
 
 pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
-    let config = &ctx.data;
+    let config = &ctx.data();
     let env = &ctx.env;
     let logger = Logger::new(utils::generate_request_id());
 
@@ -19,6 +20,7 @@ pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>
     let total_size: u64 = body["totalSize"].as_u64().ok_or(AppError::BadRequest("Invalid totalSize".into()))?;
     let user_role = body["userRole"].as_str().ok_or(AppError::BadRequest("Missing userRole".into()))?;
     let content_type = body["contentType"].as_str().ok_or(AppError::BadRequest("Missing contentType".into()))?;
+    let user_id = body["userId"].as_str().ok_or(AppError::BadRequest("Missing userId".into()))?;
 
     if total_size > config.max_file_size {
         logger.warn("File size exceeds maximum allowed", Some(json!({
@@ -34,51 +36,35 @@ pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>
     let id = durable.id_from_name(&upload_id)?;
     let stub = id.get_stub()?;
 
+    let user_role = UserRole::from_str(user_role).map_err(|e| AppError::BadRequest(e))?;
+    let r2_key = utils::generate_r2_key(config, &user_role, user_id, content_type, file_name);
+
     let init_data = json!({
         "action": "initiate",
         "uploadId": upload_id,
         "fileName": file_name,
         "totalSize": total_size,
-        "userRole": user_role,
+        "userRole": user_role.as_str(),
         "contentType": content_type,
+        "userId": user_id,
+        "r2Key": r2_key,
     });
 
-    let serialized_data = serde_json::to_string(&init_data).map_err(|e| {
-        logger.error("Failed to serialize init_data", Some(json!({ "error": format!("{:?}", e) })));
-        worker::Error::RustError(format!("Failed to serialize init_data: {:?}", e))
-    })?;
+    logger.info("Initiating upload", Some(json!({ "uploadId": upload_id, "r2Key": r2_key })));
 
-    let mut headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
+    let mut do_response = stub.fetch_with_str(&serde_json::to_string(&init_data)?).await?;
 
-    let mut req_init = RequestInit::new();
-    req_init.with_method(Method::Post)
-        .with_body(Some(serialized_data.clone().into())) // Clone serialized_data to use it later
-        .with_headers(headers);
+    if do_response.status_code() != 200 {
+        let error_message = do_response.text().await?;
+        logger.error("Durable Object returned an error", Some(json!({ "status": do_response.status_code(), "message": error_message })));
+        return Err(AppError::Internal(format!("Durable Object error: {}", error_message)).into());
+    }
 
-    logger.info("Constructing request to Durable Object", Some(json!({
-        "method": "POST",
-        "body_length": serialized_data.len()
-    })));
-
-    let request = Request::new_with_init("", &req_init)?; // Use an empty string for the URL
-
-    logger.info("Sending request to Durable Object", None);
-    let response = stub.fetch_with_request(request).await.map_err(|e| {
-        logger.error("Failed to fetch durable object", Some(json!({ "error": format!("{:?}", e) })));
-        worker::Error::RustError(format!("Failed to fetch durable object: {:?}", e))
-    })?;
-
-    logger.info("Received response from Durable Object", Some(json!({
-        "status": response.status_code()
-    })));
-
-    cors::add_cors_headers(response)
+    cors::add_cors_headers(do_response)
 }
 
 pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
     let config = &ctx.data;
-    let logger = Logger::new(utils::generate_request_id());
     let upload_id = ctx.param("id").ok_or(AppError::BadRequest("Missing uploadId".into()))?;
     let chunk_index: u16 = req.headers()
         .get("X-Chunk-Index")?
@@ -100,26 +86,17 @@ pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>
         "etag": etag,
     });
 
-    let serialized_data = serde_json::to_string(&chunk_info).map_err(|e| {
-        logger.error("Failed to serialize chunk_info", Some(json!({ "error": format!("{:?}", e) })));
-        worker::Error::RustError(format!("Failed to serialize chunk_info: {:?}", e))
-    })?;
-
     let mut headers = Headers::new();
     headers.set("Content-Type", "application/json")?;
 
-    // 构造请求并发送
     let mut req_init = RequestInit::new();
     req_init.with_method(Method::Post)
-        .with_body(Some(serialized_data.into()))
+        .with_body(Some(serde_json::to_string(&chunk_info)?.into()))
         .with_headers(headers);
 
     let request = Request::new_with_init("", &req_init)?;
-
-    logger.info("Sending request to Durable Object", None);
     let response = stub.fetch_with_request(request).await.map_err(|e| {
-        logger.error("Failed to fetch durable object", Some(json!({ "error": format!("{:?}", e) })));
-        worker::Error::RustError(format!("Failed to fetch durable object: {:?}", e))
+        worker::Error::RustError(format!("Failed to fetch with request: {:?}", e))
     })?;
 
     cors::add_cors_headers(response)
@@ -127,7 +104,6 @@ pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>
 
 pub async fn handle_complete_upload(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
     let config = &ctx.data;
-    let logger = Logger::new(utils::generate_request_id());
     let upload_id = ctx.param("id").ok_or(AppError::BadRequest("Missing uploadId".into()))?;
     let body: serde_json::Value = req.json().await?;
 
@@ -142,24 +118,11 @@ pub async fn handle_complete_upload(mut req: Request, ctx: RouteContext<Arc<Conf
     });
 
     let serialized_data = serde_json::to_string(&complete_data).map_err(|e| {
-        logger.error("Failed to serialize complete_data", Some(json!({ "error": format!("{:?}", e) })));
         worker::Error::RustError(format!("Failed to serialize complete_data: {:?}", e))
     })?;
 
-    let mut headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-
-    let mut req_init = RequestInit::new();
-    req_init.with_method(Method::Post)
-        .with_body(Some(serialized_data.into()))
-        .with_headers(headers);
-
-    let request = Request::new_with_init("", &req_init)?;
-
-    logger.info("Sending request to Durable Object", None);
-    let response = stub.fetch_with_request(request).await.map_err(|e| {
-        logger.error("Failed to fetch durable object", Some(json!({ "error": format!("{:?}", e) })));
-        worker::Error::RustError(format!("Failed to fetch durable object: {:?}", e))
+    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
+        worker::Error::RustError(format!("Failed to fetch with complete_data: {:?}", e))
     })?;
 
     cors::add_cors_headers(response)
@@ -167,7 +130,6 @@ pub async fn handle_complete_upload(mut req: Request, ctx: RouteContext<Arc<Conf
 
 pub async fn handle_get_upload_status(_req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
     let config = &ctx.data;
-    let logger = Logger::new(utils::generate_request_id());
     let upload_id = ctx.param("id").ok_or(AppError::BadRequest("Missing uploadId".into()))?;
 
     let durable = ctx.env.durable_object(&config.durable_object_name)?;
@@ -180,24 +142,11 @@ pub async fn handle_get_upload_status(_req: Request, ctx: RouteContext<Arc<Confi
     });
 
     let serialized_data = serde_json::to_string(&status_data).map_err(|e| {
-        logger.error("Failed to serialize status_data", Some(json!({ "error": format!("{:?}", e) })));
         worker::Error::RustError(format!("Failed to serialize status_data: {:?}", e))
     })?;
 
-    let mut headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-
-    let mut req_init = RequestInit::new();
-    req_init.with_method(Method::Post)
-        .with_body(Some(serialized_data.into()))
-        .with_headers(headers);
-
-    let request = Request::new_with_init("", &req_init)?;
-
-    logger.info("Sending request to Durable Object", None);
-    let response = stub.fetch_with_request(request).await.map_err(|e| {
-        logger.error("Failed to fetch durable object", Some(json!({ "error": format!("{:?}", e) })));
-        worker::Error::RustError(format!("Failed to fetch durable object: {:?}", e))
+    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
+        worker::Error::RustError(format!("Failed to fetch with status_data: {:?}", e))
     })?;
 
     cors::add_cors_headers(response)
@@ -205,7 +154,6 @@ pub async fn handle_get_upload_status(_req: Request, ctx: RouteContext<Arc<Confi
 
 pub async fn handle_cancel_upload(_req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
     let config = &ctx.data;
-    let logger = Logger::new(utils::generate_request_id());
     let upload_id = ctx.param("id").ok_or(AppError::BadRequest("Missing uploadId".into()))?;
 
     let durable = ctx.env.durable_object(&config.durable_object_name)?;
@@ -218,24 +166,11 @@ pub async fn handle_cancel_upload(_req: Request, ctx: RouteContext<Arc<Config>>)
     });
 
     let serialized_data = serde_json::to_string(&cancel_data).map_err(|e| {
-        logger.error("Failed to serialize cancel_data", Some(json!({ "error": format!("{:?}", e) })));
         worker::Error::RustError(format!("Failed to serialize cancel_data: {:?}", e))
     })?;
 
-    let mut headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-
-    let mut req_init = RequestInit::new();
-    req_init.with_method(Method::Post)
-        .with_body(Some(serialized_data.into()))
-        .with_headers(headers);
-
-    let request = Request::new_with_init("", &req_init)?;
-
-    logger.info("Sending request to Durable Object", None);
-    let response = stub.fetch_with_request(request).await.map_err(|e| {
-        logger.error("Failed to fetch durable object", Some(json!({ "error": format!("{:?}", e) })));
-        worker::Error::RustError(format!("Failed to fetch durable object: {:?}", e))
+    let response = stub.fetch_with_str(&serialized_data).await.map_err(|e| {
+        worker::Error::RustError(format!("Failed to fetch with cancel_data: {:?}", e))
     })?;
 
     cors::add_cors_headers(response)
