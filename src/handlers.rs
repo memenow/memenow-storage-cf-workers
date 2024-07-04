@@ -2,11 +2,12 @@ use worker::*;
 use std::sync::Arc;
 use crate::config::Config;
 use crate::errors::AppError;
-use crate::{cors, utils};
+use crate::utils;
 use serde_json::json;
 use crate::logging::Logger;
 use crate::models::UserRole;
 use std::str::FromStr;
+use crate::cors;
 
 pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
     let config = &ctx.data();
@@ -30,14 +31,12 @@ pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>
         return Err(AppError::FileTooLarge("File size exceeds maximum allowed".into()).into());
     }
 
-    let upload_id = utils::generate_unique_identifier();
-
-    let durable = env.durable_object(&config.durable_object_name)?;
-    let id = durable.id_from_name(&upload_id)?;
-    let stub = id.get_stub()?;
-
     let user_role = UserRole::from_str(user_role).map_err(|e| AppError::BadRequest(e))?;
     let r2_key = utils::generate_r2_key(config, &user_role, user_id, content_type, file_name);
+
+    let upload_id = utils::generate_unique_identifier();
+    let namespace = env.durable_object(config.durable_object_name.as_str())?;
+    let stub = namespace.id_from_name(&upload_id)?.get_stub()?;
 
     let init_data = json!({
         "action": "initiate",
@@ -52,15 +51,15 @@ pub async fn handle_upload_init(mut req: Request, ctx: RouteContext<Arc<Config>>
 
     logger.info("Initiating upload", Some(json!({ "uploadId": upload_id, "r2Key": r2_key })));
 
-    let mut do_response = stub.fetch_with_str(&serde_json::to_string(&init_data)?).await?;
-
+    let mut do_response = stub.fetch_with_str(&init_data.to_string()).await?;
+    
     if do_response.status_code() != 200 {
         let error_message = do_response.text().await?;
         logger.error("Durable Object returned an error", Some(json!({ "status": do_response.status_code(), "message": error_message })));
         return Err(AppError::Internal(format!("Durable Object error: {}", error_message)).into());
     }
 
-    cors::add_cors_headers(do_response)
+    Ok(do_response)
 }
 
 pub async fn handle_upload_chunk(mut req: Request, ctx: RouteContext<Arc<Config>>) -> Result<Response> {
