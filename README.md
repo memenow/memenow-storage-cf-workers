@@ -1,75 +1,132 @@
 # memenow-storage-cf-workers
-Cloudflare Workers version of memenow storage service. High-performance, edge-based file storage and retrieval system
 
-## Key Features
+A high-performance, edge-based file storage service implemented with Cloudflare Workers and Rust. The service supports chunked uploads for large files, leveraging Cloudflare's R2 storage and Durable Objects for state management.
 
-- Large file uploads with chunking support
-- Upload state tracking using Durable Objects
-- Upload progress querying and cancellation
-- File storage using R2 buckets
-- Integrated structured logging
-- Health check endpoint
+## Features
 
-## Tech Stack
+* Chunked file upload support for handling large files
+* Upload state management using Durable Objects
+* Multipart upload capabilities with R2 storage
+* Role-based file organization
+* CORS support
+* Configurable via KV storage
 
-- Rust
-- Cloudflare Workers
-- Durable Objects
-- R2 Storage
-- KV Storage
+## Configuration
 
-## Project Structure
+Configuration is managed through Cloudflare KV storage with the following default values:
 
-```
-src/
-├── config.rs       # Configuration management
-├── errors.rs       # Error handling
-├── models.rs       # Data models
-├── handlers.rs     # Request handlers
-├── durable_object.rs # Durable Object implementation
-├── utils.rs        # Utility functions
-├── logging.rs      # Logging
-└── lib.rs          # Main entry point
+```rust
+Config {
+    durable_object_name: "UPLOAD_TRACKER",
+    max_file_size: 10_737_418_240,  // 10 GB
+    chunk_size: 157_286_400,        // 150 MB
+}
 ```
 
 ## API Endpoints
 
-- `POST /v1/uploads`: Initialize upload
-- `GET /v1/uploads/:id`: Get upload progress
-- `DELETE /v1/uploads/:id`: Cancel upload
-- `GET /v1/health`: Health check
+### Initialize Upload
+```
+POST /v1/uploads/init
+Content-Type: application/json
 
-## Configuration
+{
+    "fileName": string,
+    "totalSize": number,
+    "userRole": "creator" | "member" | "subscriber",
+    "contentType": string,
+    "userId": string
+}
+```
 
-The project uses KV storage for configuration management. Key configuration items include:
+### Upload Chunk
+```
+POST /v1/uploads/{uploadId}/chunk
+Headers:
+    X-Upload-Id: string
+    X-Chunk-Index: number
+Body: binary
+```
 
-- `DURABLE_OBJECT_NAME`: Name of the Durable Object
-- `TRACKER_NAME`: Name of the tracker
-- `BUCKET_NAME`: Name of the R2 bucket
-- `MAX_FILE_SIZE`: Maximum file size
-- `RATE_LIMIT`: Rate limit
+### Complete Upload
+```
+POST /v1/uploads/{uploadId}/complete
+Content-Type: application/json
 
-## Deployment
+{
+    "uploadId": string,
+    "parts": [
+        {
+            "etag": string,
+            "partNumber": number
+        }
+    ]
+}
+```
 
-1. Ensure the `wrangler` CLI tool is installed.
-2. Update the `wrangler.toml` file with your configuration, including R2 bucket and KV namespace.
-3. Run `wrangler publish` to deploy the project.
+### Get Upload Status
+```
+GET /v1/uploads/{uploadId}
+Headers:
+    X-Upload-Id: string
+```
+
+### Cancel Upload
+```
+DELETE /v1/uploads/{uploadId}
+Headers:
+    X-Upload-Id: string
+```
+
+## File Organization
+
+Files are organized in R2 storage using the following path structure:
+```
+{userRole}/{userId}/{date}/{contentCategory}/{fileName}
+```
+
+Example:
+```
+creator/user123/20240112/image/profile.jpg
+```
+
+## Error Handling
+
+The service implements comprehensive error handling for:
+* File size limits
+* Missing or invalid headers
+* Upload state validation
+* R2 storage operations
+* Invalid user roles
 
 ## Development
 
+### Prerequisites
+* Rust
+* wrangler CLI
+* Cloudflare account with Workers, R2, and KV access
+
+### Required Cloudflare Resources
+* R2 bucket named "BUCKET"
+* KV namespace named "CONFIG"
+* Durable Object named "UPLOAD_TRACKER"
+
+### Local Development
 1. Clone the repository
-2. Install dependencies: `cargo build`
-3. Run locally: `wrangler dev`
+2. Configure wrangler.toml with your Cloudflare account details
+3. Run `wrangler dev` for local development
 
-## Notes
+### Deployment
+```bash
+wrangler publish
+```
 
-- Ensure proper configuration of Cloudflare R2 bucket and KV namespace.
-- Set appropriate client timeout when uploading large files.
-- Regularly check and clean up incomplete uploads to avoid wasting storage space.
+## Security Considerations
 
-## Contributing
-
-Issues and pull requests are welcome to improve this project.
+* File size limits are enforced
+* CORS headers are configured for cross-origin requests
+* Role-based file organization
+* Unique upload identifiers
 
 ## License
 
