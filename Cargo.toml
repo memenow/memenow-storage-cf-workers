@@ -2,6 +2,13 @@
 name = "memenow-storage-cf-workers"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.82"
+description = "High-performance file storage service built with Cloudflare Workers and Rust"
+license = "Apache-2.0"
+repository = "https://github.com/memenow/memenow-storage-cf-workers"
+readme = "README.md"
+keywords = ["cloudflare", "workers", "storage", "upload", "r2"]
+categories = ["web-programming", "filesystem"]
 
 [package.metadata.release]
 release = false
@@ -14,25 +21,20 @@ wasm-opt = false
 crate-type = ["cdylib"]
 
 [dependencies]
-worker = { version="0.3.0", features=['http'] }
-worker-macros = { version="0.3.0", features=['http'] }
-console_error_panic_hook = { version = "0.1.1" }
+worker = { version = "0.6.1", features = ["http"] }
+console_error_panic_hook = { version = "0.1.7" }
 http = "1.1"
-serde_json = "1.0.119"
-cfg-if = "1.0.0"
-futures = "0.3.30"
-lazy_static = "1.5.0"
-serde = { version = "1.0.203", features = ["derive"] }
-rand = { version = "0.9.0-alpha.1", features = ["getrandom"] }
-thiserror = "1.0.61"
-getrandom = { version = "0.2.15", features = ["js"] }
-once_cell = "1.19.0"
-chrono = { version = "0.4.38", features = ["serde"] }
-sha2 = "0.11.0-pre.3"
-hex = "0.4.3"
-async-trait = "0.1.80"
-base64 = "0.22.1"
-uuid = { version = "1.9.1", features = ["serde", "v4"] }
+serde_json = "1.0"
+cfg-if = "1.0"
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+hex = "0.4"
+async-trait = "0.1"
+base64 = "0.22"
+uuid = { version = "1.10", features = ["serde", "v4"] }
 
 [dependencies.web-sys]
 version = "0.3.60"
