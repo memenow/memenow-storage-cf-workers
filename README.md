@@ -121,8 +121,14 @@ The service implements comprehensive error handling for:
 wrangler publish
 ```
 
-## Security Considerations
+## Documentation
 
+For detailed information about the API and system architecture:
+
+- [API Reference](./docs/API.md) - Complete REST API documentation with examples
+- [Architecture Guide](./docs/ARCHITECTURE.md) - System design and component overview
+
+## Security Considerations
 * File size limits are enforced
 * CORS headers are configured for cross-origin requests
 * Role-based file organization
