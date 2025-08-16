@@ -129,7 +129,6 @@ For detailed information about the API and system architecture:
 - [Architecture Guide](./docs/ARCHITECTURE.md) - System design and component overview
 
 ## Security Considerations
-
 * File size limits are enforced
 * CORS headers are configured for cross-origin requests
 * Role-based file organization
