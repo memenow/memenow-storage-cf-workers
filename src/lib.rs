@@ -2,7 +2,7 @@
 //!
 //! A high-performance file storage service built with Rust and Cloudflare Workers.
 //! This service provides robust chunked upload capabilities for large files using
-//! R2 storage, Durable Objects for state management, and KV storage for configuration.
+//! R2 storage, D1 database for state management, and KV storage for configuration.
 //!
 //! ## Architecture
 //!
@@ -10,7 +10,7 @@
 //! - **Router**: Routes incoming requests to appropriate handlers
 //! - **Middleware**: Handles CORS, validation, and error processing
 //! - **Handlers**: Process business logic for upload operations
-//! - **Durable Objects**: Manage upload state persistence
+//! - **Database**: Manage upload state persistence with D1 SQL database
 //! - **Models**: Define data structures and types
 //! - **Utils**: Provide utility functions for file organization and ID generation
 //!
@@ -18,7 +18,7 @@
 //!
 //! - Chunked file uploads supporting files up to 10GB
 //! - Role-based file organization (creator/member/subscriber)
-//! - Multipart upload state management via Durable Objects
+//! - Multipart upload state management via D1 Database
 //! - Comprehensive error handling with structured responses
 //! - Configurable upload limits and chunk sizes
 //! - CORS support for web applications
@@ -28,11 +28,11 @@
 //! The service exposes a REST API for file upload operations:
 //!
 //! ```text
-//! POST /v1/uploads/init          - Initialize a new upload
-//! POST /v1/uploads/{id}/chunk    - Upload a file chunk
-//! POST /v1/uploads/{id}/complete - Complete the upload
-//! GET  /v1/uploads/{id}          - Get upload status
-//! DELETE /v1/uploads/{id}        - Cancel an upload
+//! POST /api/upload/init             - Initialize a new upload
+//! PUT  /api/upload/chunk            - Upload a file chunk
+//! POST /api/upload/complete         - Complete the upload
+//! GET  /api/upload/{id}/status      - Get upload status
+//! POST /api/upload/cancel           - Cancel an upload
 //! ```
 
 use worker::*;
@@ -42,14 +42,14 @@ mod config;
 mod constants;
 mod models;
 mod utils;
-mod durable_objects;
+mod database;
 mod handlers;
 mod router;
 mod errors;
 mod middleware;
 
 use config::Config;
-use constants::CONFIG_KV_NAME;
+use constants::STORAGE_CONFIG_KV_NAME;
 
 /// Main entry point for the Cloudflare Worker.
 ///
@@ -87,7 +87,7 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     console_log!("Request: {} {}", req.method(), req.url()?.path());
 
     // Load configuration from KV storage with fallback to defaults
-    let kv = env.kv(CONFIG_KV_NAME)?;
+    let kv = env.kv(STORAGE_CONFIG_KV_NAME)?;
     let config = Arc::new(Config::load(&kv).await?);
 
     // Route the request to appropriate handlers

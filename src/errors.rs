@@ -54,6 +54,20 @@ pub enum AppError {
         /// Name of the missing field
         field: String 
     },
+
+    /// Request validation error (replaces MissingField and InvalidField for simplicity).
+    #[error("Validation error: {message}")]
+    ValidationError { 
+        /// Validation error message
+        message: String 
+    },
+
+    /// Resource not found error.
+    #[error("Not found: {message}")]
+    NotFoundError { 
+        /// Not found error message
+        message: String 
+    },
     
     /// Field contains invalid or malformed data.
     #[error("Invalid field value: {field} - {reason}")]
@@ -115,11 +129,11 @@ pub enum AppError {
         message: String 
     },
     
-    /// Durable Object operation failure.
-    #[error("Durable Object storage error: {message}")]
-    DurableObjectError { 
-        /// Detailed error message from Durable Object operation
-        message: String 
+    /// D1 Database operation failure.
+    #[error("Database error: {message}")]
+    DatabaseError { 
+        /// Detailed error message from database operation
+        message: String,
     },
     
     /// Configuration loading or validation error.
@@ -189,6 +203,16 @@ impl AppError {
                 "MISSING_FIELD",
                 format!("Missing required field: {}", field),
             ),
+            AppError::ValidationError { message } => (
+                400,
+                "VALIDATION_ERROR",
+                message.clone(),
+            ),
+            AppError::NotFoundError { message } => (
+                404,
+                "NOT_FOUND",
+                message.clone(),
+            ),
             AppError::InvalidField { field, reason } => (
                 400,
                 "INVALID_FIELD",
@@ -229,10 +253,10 @@ impl AppError {
                 "KV_ERROR",
                 format!("Configuration storage error: {}", message),
             ),
-            AppError::DurableObjectError { message } => (
-                500,
-                "DURABLE_OBJECT_ERROR",
-                format!("State management error: {}", message),
+            AppError::DatabaseError { message } => (
+                502,
+                "DATABASE_ERROR",
+                message.clone(),
             ),
             AppError::ConfigError { message } => (
                 500,
@@ -276,7 +300,7 @@ impl AppError {
 ///
 /// # Error Classification
 ///
-/// - **"not found"**: Maps to `DurableObjectError`
+/// - **"not found"**: Maps to `DatabaseError`
 /// - **"KV" or "kv"**: Maps to `KvError`
 /// - **"R2" or "bucket"**: Maps to `R2Error`
 /// - **All others**: Maps to `InternalError`
@@ -285,8 +309,8 @@ impl From<WorkerError> for AppError {
         let error_msg = err.to_string();
         
         if error_msg.contains("not found") {
-            AppError::DurableObjectError {
-                message: "Resource not found".to_string(),
+            AppError::DatabaseError {
+                message: error_msg.to_string(),
             }
         } else if error_msg.contains("KV") || error_msg.contains("kv") {
             AppError::KvError {

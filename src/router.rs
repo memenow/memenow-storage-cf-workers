@@ -8,30 +8,30 @@
 //!
 //! The router uses a simple pattern-matching approach that:
 //! - Handles CORS preflight requests automatically
-//! - Routes upload operations to Durable Objects for state management
+//! - Routes upload operations to D1 Database for state management
 //! - Provides health check endpoints for monitoring
 //! - Returns 404 responses for unmatched routes
 //!
 //! ## Supported Routes
 //!
 //! - `GET /health` - Health check endpoint
-//! - `POST /v1/uploads/*` - Upload-related operations
-//! - `GET /v1/uploads/*` - Upload status queries
-//! - `DELETE /v1/uploads/*` - Upload cancellation
+//! - `POST /api/upload/*` - Upload-related operations
+//! - `PUT /api/upload/*` - Upload chunk operations
+//! - `GET /api/upload/*` - Upload status queries
 //! - `OPTIONS *` - CORS preflight requests
 //!
 //! ## Architecture Benefits
 //!
 //! - **Centralized Routing**: Single point for request dispatch logic
 //! - **CORS Handling**: Automatic handling of cross-origin requests
-//! - **Durable Object Integration**: Seamless delegation to stateful handlers
+//! - **Database Integration**: Seamless delegation to D1 Database handlers
 //! - **Extensibility**: Easy to add new route patterns
 
 use worker::*;
 use std::sync::Arc;
 
 use crate::config::Config;
-use crate::handlers::*;
+use crate::handlers::{handle_upload_routes, handle_health_check, handle_not_found};
 use crate::middleware::CorsMiddleware;
 
 /// Handles incoming HTTP requests and routes them to appropriate handlers.
@@ -98,15 +98,15 @@ pub async fn handle_request(req: Request, env: Env, config: Arc<Config>) -> Resu
         // Health check endpoint for monitoring and load balancer probes
         (Method::Get, "/health") => handle_health_check(req, env).await,
         
-        // Upload routes - all upload operations are delegated to Durable Objects
+        // Upload routes - all upload operations are delegated to D1 Database
         // This ensures state consistency and proper handling of concurrent operations
-        (Method::Post, path) if path.starts_with("/v1/uploads") => {
+        (Method::Post, path) if path.starts_with("/api/upload") => {
             handle_upload_routes(req, env, config).await
         },
-        (Method::Get, path) if path.starts_with("/v1/uploads") => {
+        (Method::Put, path) if path.starts_with("/api/upload") => {
             handle_upload_routes(req, env, config).await
         },
-        (Method::Delete, path) if path.starts_with("/v1/uploads") => {
+        (Method::Get, path) if path.starts_with("/api/upload") => {
             handle_upload_routes(req, env, config).await
         },
         

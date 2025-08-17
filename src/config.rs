@@ -11,7 +11,7 @@
 //!
 //! ## Configuration Options
 //!
-//! - `durable_object_name`: Name of the Durable Object class for upload tracking
+//! - `database_name`: Name of the D1 database binding for upload tracking
 //! - `max_file_size`: Maximum allowed file size in bytes (default: 10GB)
 //! - `chunk_size`: Size of upload chunks in bytes (default: 150MB)
 //!
@@ -26,18 +26,18 @@
 use worker::kv::KvStore;
 use worker::{console_log, Result};
 use serde::{Deserialize, Serialize};
-use crate::constants::{UPLOAD_TRACKER_BINDING, DEFAULT_MAX_FILE_SIZE, DEFAULT_CHUNK_SIZE};
+use crate::constants::{DEFAULT_MAX_FILE_SIZE, DEFAULT_CHUNK_SIZE, UPLOAD_DB_NAME};
 
 /// Configuration structure for the file storage service.
 ///
 /// This struct contains all configurable parameters for the service,
-/// including upload limits, chunk sizes, and Durable Object settings.
+/// including upload limits, chunk sizes, and database settings.
 /// All fields are public to allow easy access throughout the application.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Config {
-    /// Name of the Durable Object binding used for upload state tracking.
+    /// Name of the D1 database binding used for upload state tracking.
     /// Must match the binding name in wrangler.toml.
-    pub durable_object_name: String,
+    pub database_name: String,
     
     /// Maximum allowed file size in bytes.
     /// Files exceeding this limit will be rejected during upload initialization.
@@ -54,10 +54,10 @@ impl Default for Config {
     /// Default values are optimized for:
     /// - Large file support (up to 10GB)
     /// - Efficient chunking (150MB chunks)
-    /// - Standard Durable Object binding name
+    /// - Standard D1 database binding name
     fn default() -> Self {
         Self {
-            durable_object_name: UPLOAD_TRACKER_BINDING.to_string(),
+            database_name: UPLOAD_DB_NAME.to_string(),
             max_file_size: DEFAULT_MAX_FILE_SIZE,
             chunk_size: DEFAULT_CHUNK_SIZE as usize,
         }
@@ -92,7 +92,7 @@ impl Config {
     /// The expected JSON format in KV storage:
     /// ```json
     /// {
-    ///   "durable_object_name": "UPLOAD_TRACKER",
+    ///   "database_name": "UPLOAD_DB",
     ///   "max_file_size": 10737418240,
     ///   "chunk_size": 157286400
     /// }

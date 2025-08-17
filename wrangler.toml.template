@@ -16,11 +16,11 @@ preview_bucket_name = "xxxx"
 
 [[kv_namespaces]]
 binding = "STORAGE_CONFIG"
-id = "your-production-kv-namespace-id"
-preview_id = "your-preview-kv-namespace-id"
+id = "${PROD_KV_NAMESPACE_ID}"
+preview_id = "${DEV_KV_NAMESPACE_ID}"
 
 [[d1_databases]]
 binding = "UPLOAD_DB"
 database_name = "xxxx"
-database_id = "your-prod-d1-database-id"
-preview_database_id = "your-dev-d1-database-id"
+database_id = "${PROD_D1_DATABASE_ID}"
+preview_database_id = "${DEV_D1_DATABASE_ID}"
