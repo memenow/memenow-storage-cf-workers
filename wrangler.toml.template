@@ -11,8 +11,8 @@ command = "cargo install -q worker-build && worker-build --release"
 
 [[r2_buckets]]
 binding = "STORAGE_BUCKET"
-bucket_name = "xxxx"
-preview_bucket_name = "xxxx"
+bucket_name = "${PROD_R2_BUCKET}"
+preview_bucket_name = "${DEV_R2_BUCKET}"
 
 [[kv_namespaces]]
 binding = "STORAGE_CONFIG"
@@ -21,6 +21,6 @@ preview_id = "${DEV_KV_NAMESPACE_ID}"
 
 [[d1_databases]]
 binding = "UPLOAD_DB"
-database_name = "xxxx"
+database_name = "${PROD_D1_DATABASE_NAME}"
 database_id = "${PROD_D1_DATABASE_ID}"
 preview_database_id = "${DEV_D1_DATABASE_ID}"
