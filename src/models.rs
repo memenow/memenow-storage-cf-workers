@@ -18,7 +18,6 @@
 //! - UTC timestamps for global consistency
 
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use chrono::{DateTime, Utc};
 
 /// User role enumeration for file organization and access control.
@@ -68,7 +67,7 @@ impl UserRole {
     }
 }
 
-impl FromStr for UserRole {
+impl std::str::FromStr for UserRole {
     type Err = String;
 
     /// Parses a string into a UserRole variant.
@@ -186,7 +185,7 @@ pub struct UploadMetadata {
 ///     v             v
 /// Cancelled <- Cancelled
 /// ```
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum UploadStatus {
     /// Upload session has been created but no chunks have been uploaded yet.
     Initiated,

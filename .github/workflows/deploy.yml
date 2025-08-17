@@ -1,0 +1,74 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wrangler
+        run: npm install -g wrangler
+
+      - name: Create wrangler.toml from template
+        run: |
+          cp wrangler.toml.template wrangler.toml
+          # Replace placeholders with actual secret values
+          sed -i 's/${PROD_KV_NAMESPACE_ID}/${{ secrets.PROD_KV_NAMESPACE_ID }}/g' wrangler.toml
+          sed -i 's/${DEV_KV_NAMESPACE_ID}/${{ secrets.DEV_KV_NAMESPACE_ID }}/g' wrangler.toml
+          sed -i 's/${PROD_D1_DATABASE_ID}/${{ secrets.PROD_D1_DATABASE_ID }}/g' wrangler.toml
+          sed -i 's/${DEV_D1_DATABASE_ID}/${{ secrets.DEV_D1_DATABASE_ID }}/g' wrangler.toml
+
+      - name: Build project
+        run: |
+          cargo install worker-build
+          worker-build --release
+
+      - name: Deploy to Cloudflare Workers (Preview)
+        if: github.event_name == 'push'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --env preview
+
+      - name: Deploy to Cloudflare Workers (Production)
+        if: github.event_name == 'release'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Initialize D1 Database Schema (Production)
+        if: github.event_name == 'release'
+        run: |
+          wrangler d1 execute prod-memenow-upload-metadata --file=schema.sql
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Initialize D1 Database Schema (Preview)
+        if: github.event_name == 'push'
+        run: |
+          wrangler d1 execute dev-memenow-upload-metadata --file=schema.sql
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

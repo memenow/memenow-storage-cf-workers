@@ -17,16 +17,13 @@
 //! Standard HTTP header names used by the upload API.
 
 /// Standard KV configuration binding name
-pub const CONFIG_KV_NAME: &str = "CONFIG";
+pub const STORAGE_CONFIG_KV_NAME: &str = "STORAGE_CONFIG";
 
 /// Standard R2 bucket binding name
-pub const R2_BUCKET_NAME: &str = "BUCKET";
+pub const STORAGE_BUCKET_NAME: &str = "STORAGE_BUCKET";
 
-/// Standard Durable Object binding name for upload tracking
-pub const UPLOAD_TRACKER_BINDING: &str = "UPLOAD_TRACKER";
-
-/// Standard Durable Object instance name
-pub const UPLOAD_TRACKER_INSTANCE: &str = "UPLOAD_TRACKER";
+/// Standard D1 database binding name for upload tracking
+pub const UPLOAD_DB_NAME: &str = "UPLOAD_DB";
 
 /// Default maximum file size (10GB)
 pub const DEFAULT_MAX_FILE_SIZE: u64 = 10_737_418_240;

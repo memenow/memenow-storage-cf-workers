@@ -52,7 +52,10 @@ use crate::constants::{CORS_ALLOW_ORIGIN, CORS_ALLOW_METHODS, CORS_ALLOW_HEADERS
 ///
 /// # Arguments
 ///
-/// * `body` - JSON object containing upload request data
+/// * `user_role` - User role for file organization
+/// * `user_id` - User identifier
+/// * `file_name` - Original filename
+/// * `content_type` - MIME type of the file
 ///
 /// # Returns
 ///
@@ -75,14 +78,9 @@ use crate::constants::{CORS_ALLOW_ORIGIN, CORS_ALLOW_METHODS, CORS_ALLOW_HEADERS
 /// # Example
 ///
 /// ```rust
-/// let request = json!({
-///     "userRole": "creator",
-///     "userId": "user123",
-///     "fileName": "profile.jpg",
-///     "contentType": "image/jpeg"
-/// });
+/// use crate::models::UserRole;
 /// 
-/// let key = generate_r2_key(&request);
+/// let key = generate_r2_key(&UserRole::Creator, "user123", "profile.jpg", "image/jpeg");
 /// // Returns: "creator/user123/20240115/image/profile.jpg"
 /// ```
 ///
@@ -92,30 +90,16 @@ use crate::constants::{CORS_ALLOW_ORIGIN, CORS_ALLOW_METHODS, CORS_ALLOW_HEADERS
 /// - Validates user role against allowed values
 /// - Limits field lengths to prevent excessive storage paths
 /// - Removes dangerous characters from all components
-///
-/// # Fallback Values
-///
-/// If required fields are missing from the input:
-/// - `userRole`: defaults to "unknown"
-/// - `userId`: defaults to "anonymous" 
-/// - `fileName`: defaults to "unknown"
-/// - `contentType`: defaults to empty string (maps to "other" category)
-pub fn generate_r2_key(body: &serde_json::Value) -> String {
-    let user_role = sanitize_path_component(
-        body["userRole"].as_str().unwrap_or("unknown")
-    );
-    let user_id = sanitize_path_component(
-        body["userId"].as_str().unwrap_or("anonymous")
-    );
-    let raw_file_name = body["fileName"].as_str().unwrap_or("unknown");
-    let file_name = sanitize_filename(raw_file_name);
+pub fn generate_r2_key(user_role: &crate::models::UserRole, user_id: &str, file_name: &str, content_type: &str) -> String {
+    let role_str = sanitize_path_component(user_role.as_str());
+    let user_id_safe = sanitize_path_component(user_id);
+    let file_name_safe = sanitize_filename(file_name);
     let date = Utc::now().format("%Y%m%d").to_string();
     
     // Determine content category based on MIME type
-    let content_type = body["contentType"].as_str().unwrap_or("");
     let category = categorize_content_type(content_type);
     
-    format!("{}/{}/{}/{}/{}", user_role, user_id, date, category, file_name)
+    format!("{}/{}/{}/{}/{}", role_str, user_id_safe, date, category, file_name_safe)
 }
 
 /// Sanitizes a path component to prevent security issues.

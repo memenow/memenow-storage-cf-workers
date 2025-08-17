@@ -2,7 +2,7 @@
 
 ## Overview
 
-The MemeNow Storage API provides a REST interface for managing large file uploads using chunked multipart uploads. The API is built on Cloudflare Workers and provides global edge performance with strong consistency guarantees.
+The MemeNow Storage API provides a REST interface for managing large file uploads using chunked multipart uploads. The API is built on Cloudflare Workers and provides global edge performance with strong consistency guarantees through D1 database integration.
 
 ## Base URL
 
@@ -12,11 +12,22 @@ https://your-worker-name.your-subdomain.workers.dev
 
 ## Authentication
 
-Currently, the API uses user identification via the `userId` parameter in requests. Future versions will include token-based authentication.
+Currently, the API uses user identification via the `user_id` parameter in requests. Future versions will include JWT-based authentication with role-based access control.
+
+## Architecture
+
+The service uses a modern serverless architecture:
+
+- **Cloudflare Workers**: Edge compute for request processing
+- **D1 Database**: SQL database for upload metadata and state management
+- **R2 Storage**: Object storage for file data
+- **KV Storage**: Configuration and caching
+
+This architecture provides ACID compliance, complex query capabilities, and improved scalability compared to previous implementations.
 
 ## Rate Limiting
 
-Rate limiting should be implemented at the Cloudflare dashboard level or via custom middleware for production deployments.
+Rate limiting should be implemented at the Cloudflare dashboard level or via custom middleware for production deployments. Consider implementing per-user rate limits based on user roles.
 
 ## Error Handling
 
@@ -44,6 +55,7 @@ All API responses follow a consistent error format with appropriate HTTP status 
 | `UPLOAD_NOT_FOUND` | 404 | Upload ID not found |
 | `UPLOAD_COMPLETED` | 409 | Upload already completed |
 | `UPLOAD_CANCELLED` | 409 | Upload was cancelled |
+| `DATABASE_ERROR` | 502 | Database operation failed |
 | `R2_ERROR` | 502 | R2 storage operation failed |
 | `RATE_LIMIT_EXCEEDED` | 429 | Too many requests |
 
@@ -77,7 +89,7 @@ GET /health
 Create a new upload session for a file.
 
 ```http
-POST /v1/uploads/init
+POST /api/upload/init
 Content-Type: application/json
 ```
 
@@ -85,11 +97,11 @@ Content-Type: application/json
 
 ```json
 {
-  "fileName": "example.mp4",
-  "totalSize": 524288000,
-  "userRole": "creator",
-  "contentType": "video/mp4",
-  "userId": "user_12345"
+  "file_name": "example.mp4",
+  "total_size": 524288000,
+  "user_role": "creator",
+  "content_type": "video/mp4",
+  "user_id": "user_12345"
 }
 ```
 
@@ -97,21 +109,29 @@ Content-Type: application/json
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `fileName` | string | Yes | Original filename |
-| `totalSize` | number | Yes | Total file size in bytes |
-| `userRole` | string | Yes | User role: `creator`, `member`, or `subscriber` |
-| `contentType` | string | Yes | MIME type of the file |
-| `userId` | string | Yes | Unique user identifier |
+| `file_name` | string | Yes | Original filename |
+| `total_size` | number | Yes | Total file size in bytes |
+| `user_role` | string | Yes | User role: `creator`, `member`, or `subscriber` |
+| `content_type` | string | Yes | MIME type of the file |
+| `user_id` | string | Yes | Unique user identifier |
 
 #### Initialize Upload Response
 
 ```json
 {
-  "message": "Multipart upload initiated",
-  "uploadId": "1704447000000-550e8400-e29b-41d4-a716-446655440000-12345678901234567890",
-  "r2Key": "creator/user_12345/20240105/video/example.mp4"
+  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
+  "chunk_size": 157286400,
+  "status": "initiated"
 }
 ```
+
+##### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `upload_id` | string | Unique upload session identifier |
+| `chunk_size` | number | Recommended chunk size in bytes |
+| `status` | string | Current upload status |
 
 **Status Codes:**
 - `200` - Upload initialized successfully
@@ -125,7 +145,7 @@ Content-Type: application/json
 Upload a chunk of the file.
 
 ```http
-POST /v1/uploads/{uploadId}/chunk
+PUT /api/upload/chunk
 Content-Type: application/octet-stream
 X-Upload-Id: {uploadId}
 X-Chunk-Index: {chunkNumber}
@@ -136,7 +156,7 @@ X-Chunk-Index: {chunkNumber}
 | Header | Type | Required | Description |
 |--------|------|----------|-------------|
 | `X-Upload-Id` | string | Yes | Upload session identifier |
-| `X-Chunk-Index` | number | Yes | Chunk number (starting from 1) |
+| `X-Chunk-Index` | number | Yes | Chunk number (starting from 0) |
 | `Content-Type` | string | Yes | Must be `application/octet-stream` |
 
 #### Upload Chunk Request Body
@@ -147,13 +167,19 @@ Binary data representing the file chunk.
 
 ```json
 {
-  "message": "Chunk uploaded successfully",
-  "chunkIndex": 1,
-  "etag": "\"9bb58f26192e4ba00f01e2e7b136bbd8\"",
-  "uploadId": "1704447000000-550e8400-e29b-41d4-a716-446655440000-12345678901234567890",
-  "r2UploadId": "2~1234567890abcdef1234567890abcdef"
+  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
+  "chunk_index": 0,
+  "status": "uploaded"
 }
 ```
+
+##### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `upload_id` | string | Upload session identifier |
+| `chunk_index` | number | Index of the uploaded chunk |
+| `status` | string | Status of the chunk upload |
 
 **Status Codes:**
 - `200` - Chunk uploaded successfully
@@ -164,10 +190,10 @@ Binary data representing the file chunk.
 
 ### Complete Upload
 
-Complete the multipart upload by providing all uploaded parts.
+Complete the multipart upload.
 
 ```http
-POST /v1/uploads/{uploadId}/complete
+POST /api/upload/complete
 Content-Type: application/json
 ```
 
@@ -175,17 +201,7 @@ Content-Type: application/json
 
 ```json
 {
-  "uploadId": "1704447000000-550e8400-e29b-41d4-a716-446655440000-12345678901234567890",
-  "parts": [
-    {
-      "etag": "\"9bb58f26192e4ba00f01e2e7b136bbd8\"",
-      "partNumber": 1
-    },
-    {
-      "etag": "\"1234567890abcdef1234567890abcdef\"",
-      "partNumber": 2
-    }
-  ]
+  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -193,23 +209,29 @@ Content-Type: application/json
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `uploadId` | string | Yes | Upload session identifier |
-| `parts` | array | Yes | Array of uploaded parts with ETags |
-| `parts[].etag` | string | Yes | ETag returned from chunk upload |
-| `parts[].partNumber` | number | Yes | Part number (matches chunk index) |
+| `upload_id` | string | Yes | Upload session identifier |
 
 #### Complete Upload Response
 
 ```json
 {
-  "message": "Multipart upload completed successfully",
-  "uploadId": "1704447000000-550e8400-e29b-41d4-a716-446655440000-12345678901234567890"
+  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
+  "r2_key": "creator/user_12345/20240105/video/example.mp4",
+  "status": "completed"
 }
 ```
 
+##### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `upload_id` | string | Upload session identifier |
+| `r2_key` | string | Final storage path in R2 |
+| `status` | string | Final upload status |
+
 **Status Codes:**
 - `200` - Upload completed successfully
-- `400` - Invalid parts list or missing parts
+- `400` - Invalid request or incomplete upload
 - `404` - Upload session not found
 
 ---
@@ -219,34 +241,47 @@ Content-Type: application/json
 Retrieve the current status of an upload session.
 
 ```http
-GET /v1/uploads/{uploadId}
-X-Upload-Id: {uploadId}
+GET /api/upload/{upload_id}/status
 ```
-
-#### Get Upload Status Headers
-
-| Header | Type | Required | Description |
-|--------|------|----------|-------------|
-| `X-Upload-Id` | string | Yes | Upload session identifier |
 
 #### Get Upload Status Response
 
 ```json
 {
-  "uploadId": "1704447000000-550e8400-e29b-41d4-a716-446655440000-12345678901234567890",
-  "fileName": "example.mp4",
-  "totalSize": 524288000,
-  "uploadedChunks": [1, 2, 3],
-  "status": "InProgress"
+  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
+  "file_name": "example.mp4",
+  "total_size": 524288000,
+  "user_id": "user_12345",
+  "user_role": "creator",
+  "content_type": "video/mp4",
+  "status": "in_progress",
+  "chunks_uploaded": 5,
+  "created_at": "2024-01-05T10:30:00Z",
+  "updated_at": "2024-01-05T10:35:00Z"
 }
 ```
 
+##### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `upload_id` | string | Upload session identifier |
+| `file_name` | string | Original filename |
+| `total_size` | number | Total file size in bytes |
+| `user_id` | string | User identifier |
+| `user_role` | string | User role |
+| `content_type` | string | MIME type |
+| `status` | string | Current upload status |
+| `chunks_uploaded` | number | Number of chunks uploaded |
+| `created_at` | string | Upload creation timestamp (ISO 8601) |
+| `updated_at` | string | Last update timestamp (ISO 8601) |
+
 ##### Status Values
 
-- `Initiated` - Upload session created but no chunks uploaded
-- `InProgress` - Some chunks have been uploaded
-- `Completed` - All chunks uploaded and file assembled
-- `Cancelled` - Upload was cancelled
+- `initiated` - Upload session created but no chunks uploaded
+- `in_progress` - Some chunks have been uploaded
+- `completed` - All chunks uploaded and file assembled
+- `cancelled` - Upload was cancelled
 
 **Status Codes:**
 - `200` - Status retrieved successfully
@@ -259,21 +294,24 @@ X-Upload-Id: {uploadId}
 Cancel an active upload session and clean up resources.
 
 ```http
-DELETE /v1/uploads/{uploadId}
-X-Upload-Id: {uploadId}
+POST /api/upload/cancel
+Content-Type: application/json
 ```
 
-#### Cancel Upload Headers
+#### Cancel Upload Request Body
 
-| Header | Type | Required | Description |
-|--------|------|----------|-------------|
-| `X-Upload-Id` | string | Yes | Upload session identifier |
+```json
+{
+  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000"
+}
+```
 
 #### Cancel Upload Response
 
 ```json
 {
-  "message": "Upload cancelled successfully"
+  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
+  "status": "cancelled"
 }
 ```
 
@@ -283,23 +321,24 @@ X-Upload-Id: {uploadId}
 
 ## File Organization
 
-Files are organized in R2 storage using a structured path format:
+Files are organized in R2 storage using a structured path format that facilitates browsing and management:
 
 ```text
-{userRole}/{userId}/{date}/{contentCategory}/{fileName}
+{user_role}/{user_id}/{date}/{content_category}/{file_name}
 ```
 
 ### Path Components
 
-- **userRole**: `creator`, `member`, or `subscriber`
-- **userId**: Unique user identifier
+- **user_role**: `creator`, `member`, or `subscriber`
+- **user_id**: Unique user identifier
 - **date**: Upload date in `YYYYMMDD` format
-- **contentCategory**: Determined by content type:
+- **content_category**: Determined by content type:
   - `image` - Image files (image/*)
   - `video` - Video files (video/*)
   - `audio` - Audio files (audio/*)
   - `document` - Text and JSON files
   - `other` - Other file types
+- **file_name**: Sanitized original filename
 
 ### Example Paths
 
@@ -308,6 +347,42 @@ creator/user123/20240115/image/profile.jpg
 member/user456/20240115/video/presentation.mp4
 subscriber/user789/20240115/document/report.pdf
 ```
+
+This structure enables:
+- Easy browsing by user and date
+- Content type filtering
+- Role-based access control (future enhancement)
+- Scalable storage organization
+
+## Database Schema
+
+The service uses D1 database with the following schema:
+
+### uploads Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| upload_id | TEXT PRIMARY KEY | Unique upload identifier |
+| file_name | TEXT NOT NULL | Original filename |
+| total_size | INTEGER NOT NULL | Total file size in bytes |
+| content_type | TEXT NOT NULL | MIME type |
+| user_id | TEXT NOT NULL | User identifier |
+| user_role | TEXT NOT NULL | User role (creator/member/subscriber) |
+| r2_key | TEXT NOT NULL | R2 storage path |
+| r2_upload_id | TEXT NOT NULL | R2 multipart upload ID |
+| status | TEXT NOT NULL | Upload status |
+| created_at | TEXT NOT NULL | Creation timestamp (ISO 8601) |
+| updated_at | TEXT NOT NULL | Last update timestamp (ISO 8601) |
+
+### upload_chunks Table
+
+| Column | Type | Description |
+|--------|------|-------------|
+| upload_id | TEXT | Upload identifier (foreign key) |
+| chunk_index | INTEGER | Chunk index number |
+| chunk_size | INTEGER NOT NULL | Chunk size in bytes |
+| etag | TEXT | R2 ETag for the chunk |
+| uploaded_at | TEXT NOT NULL | Upload timestamp (ISO 8601) |
 
 ## Usage Examples
 
@@ -321,53 +396,65 @@ class MemeNowStorageClient {
 
   async uploadFile(file, userId, userRole) {
     // Initialize upload
-    const initResponse = await fetch(`${this.baseUrl}/v1/uploads/init`, {
+    const initResponse = await fetch(`${this.baseUrl}/api/upload/init`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        fileName: file.name,
-        totalSize: file.size,
-        userRole,
-        contentType: file.type,
-        userId
+        file_name: file.name,
+        total_size: file.size,
+        user_role: userRole,
+        content_type: file.type,
+        user_id: userId
       })
     });
 
-    const { uploadId } = await initResponse.json();
+    const { upload_id, chunk_size } = await initResponse.json();
 
     // Upload chunks
-    const chunkSize = 150 * 1024 * 1024; // 150MB
-    const parts = [];
+    const chunks = Math.ceil(file.size / chunk_size);
     
-    for (let i = 0; i < file.size; i += chunkSize) {
-      const chunk = file.slice(i, i + chunkSize);
-      const chunkIndex = Math.floor(i / chunkSize) + 1;
+    for (let i = 0; i < chunks; i++) {
+      const start = i * chunk_size;
+      const end = Math.min(start + chunk_size, file.size);
+      const chunk = file.slice(start, end);
       
-      const chunkResponse = await fetch(`${this.baseUrl}/v1/uploads/${uploadId}/chunk`, {
-        method: 'POST',
+      const chunkResponse = await fetch(`${this.baseUrl}/api/upload/chunk`, {
+        method: 'PUT',
         headers: {
           'Content-Type': 'application/octet-stream',
-          'X-Upload-Id': uploadId,
-          'X-Chunk-Index': chunkIndex.toString()
+          'X-Upload-Id': upload_id,
+          'X-Chunk-Index': i.toString()
         },
         body: chunk
       });
       
-      const chunkResult = await chunkResponse.json();
-      parts.push({
-        etag: chunkResult.etag,
-        partNumber: chunkIndex
-      });
+      if (!chunkResponse.ok) {
+        throw new Error(`Chunk upload failed: ${chunkResponse.status}`);
+      }
     }
 
     // Complete upload
-    const completeResponse = await fetch(`${this.baseUrl}/v1/uploads/${uploadId}/complete`, {
+    const completeResponse = await fetch(`${this.baseUrl}/api/upload/complete`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uploadId, parts })
+      body: JSON.stringify({ upload_id })
     });
 
     return await completeResponse.json();
+  }
+
+  async getUploadStatus(uploadId) {
+    const response = await fetch(`${this.baseUrl}/api/upload/${uploadId}/status`);
+    return await response.json();
+  }
+
+  async cancelUpload(uploadId) {
+    const response = await fetch(`${this.baseUrl}/api/upload/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ upload_id: uploadId })
+    });
+    return await response.json();
   }
 }
 
@@ -381,6 +468,7 @@ const result = await client.uploadFile(fileInput.files[0], 'user123', 'creator')
 ```python
 import requests
 import math
+import os
 
 class MemeNowStorageClient:
     def __init__(self, base_url):
@@ -390,54 +478,65 @@ class MemeNowStorageClient:
         with open(file_path, 'rb') as f:
             file_data = f.read()
             file_size = len(file_data)
-            file_name = file_path.split('/')[-1]
+            file_name = os.path.basename(file_path)
         
         # Initialize upload
         init_response = requests.post(
-            f"{self.base_url}/v1/uploads/init",
+            f"{self.base_url}/api/upload/init",
             json={
-                "fileName": file_name,
-                "totalSize": file_size,
-                "userRole": user_role,
-                "contentType": "application/octet-stream",
-                "userId": user_id
+                "file_name": file_name,
+                "total_size": file_size,
+                "user_role": user_role,
+                "content_type": "application/octet-stream",
+                "user_id": user_id
             }
         )
+        init_response.raise_for_status()
         
         upload_data = init_response.json()
-        upload_id = upload_data["uploadId"]
+        upload_id = upload_data["upload_id"]
+        chunk_size = upload_data["chunk_size"]
         
         # Upload chunks
-        chunk_size = 150 * 1024 * 1024  # 150MB
-        parts = []
+        chunks = math.ceil(file_size / chunk_size)
         
-        for i in range(0, file_size, chunk_size):
-            chunk_data = file_data[i:i + chunk_size]
-            chunk_index = i // chunk_size + 1
+        for i in range(chunks):
+            start = i * chunk_size
+            end = min(start + chunk_size, file_size)
+            chunk_data = file_data[start:end]
             
-            chunk_response = requests.post(
-                f"{self.base_url}/v1/uploads/{upload_id}/chunk",
+            chunk_response = requests.put(
+                f"{self.base_url}/api/upload/chunk",
                 data=chunk_data,
                 headers={
                     "Content-Type": "application/octet-stream",
                     "X-Upload-Id": upload_id,
-                    "X-Chunk-Index": str(chunk_index)
+                    "X-Chunk-Index": str(i)
                 }
             )
-            
-            chunk_result = chunk_response.json()
-            parts.append({
-                "etag": chunk_result["etag"],
-                "partNumber": chunk_index
-            })
+            chunk_response.raise_for_status()
         
         # Complete upload
         complete_response = requests.post(
-            f"{self.base_url}/v1/uploads/{upload_id}/complete",
-            json={"uploadId": upload_id, "parts": parts}
+            f"{self.base_url}/api/upload/complete",
+            json={"upload_id": upload_id}
         )
+        complete_response.raise_for_status()
         
         return complete_response.json()
+    
+    def get_upload_status(self, upload_id):
+        response = requests.get(f"{self.base_url}/api/upload/{upload_id}/status")
+        response.raise_for_status()
+        return response.json()
+    
+    def cancel_upload(self, upload_id):
+        response = requests.post(
+            f"{self.base_url}/api/upload/cancel",
+            json={"upload_id": upload_id}
+        )
+        response.raise_for_status()
+        return response.json()
 
 # Usage
 client = MemeNowStorageClient("https://your-worker.workers.dev")
@@ -446,15 +545,15 @@ result = client.upload_file("/path/to/file.mp4", "user123", "creator")
 
 ## Configuration
 
-### Environment Variables
+### Cloudflare Resources
 
-Configure the following in your Cloudflare Workers environment:
+Configure the following resources in your Cloudflare account:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `BUCKET` | Yes | R2 bucket binding name |
-| `CONFIG` | Yes | KV namespace binding name |
-| `UPLOAD_TRACKER` | Yes | Durable Object binding name |
+| Resource | Binding Name | Description |
+|----------|--------------|-------------|
+| R2 Bucket | `STORAGE_BUCKET` | Object storage for files |
+| D1 Database | `UPLOAD_DB` | SQL database for metadata |
+| KV Namespace | `STORAGE_CONFIG` | Configuration storage |
 
 ### KV Configuration
 
@@ -462,7 +561,7 @@ Store configuration in KV under the key `config`:
 
 ```json
 {
-  "durable_object_name": "UPLOAD_TRACKER",
+  "database_name": "UPLOAD_DB",
   "max_file_size": 10737418240,
   "chunk_size": 157286400
 }
@@ -472,9 +571,27 @@ Store configuration in KV under the key `config`:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `durable_object_name` | string | "UPLOAD_TRACKER" | Durable Object binding name |
+| `database_name` | string | "UPLOAD_DB" | D1 database binding name |
 | `max_file_size` | number | 10737418240 | Maximum file size in bytes (10GB) |
 | `chunk_size` | number | 157286400 | Recommended chunk size in bytes (150MB) |
+
+### Environment Setup
+
+1. Create D1 database and apply schema:
+   ```bash
+   wrangler d1 create memenow-uploads
+   wrangler d1 execute memenow-uploads --file schema.sql
+   ```
+
+2. Create R2 bucket:
+   ```bash
+   wrangler r2 bucket create memenow-storage
+   ```
+
+3. Create KV namespace:
+   ```bash
+   wrangler kv:namespace create "STORAGE_CONFIG"
+   ```
 
 ## Testing
 
@@ -488,33 +605,32 @@ curl -X GET https://your-worker.workers.dev/health
 
 ```bash
 # 1. Initialize upload
-UPLOAD_ID=$(curl -X POST https://your-worker.workers.dev/v1/uploads/init \
+UPLOAD_RESPONSE=$(curl -X POST https://your-worker.workers.dev/api/upload/init \
   -H "Content-Type: application/json" \
   -d '{
-    "fileName": "test.txt",
-    "totalSize": 13,
-    "userRole": "creator",
-    "contentType": "text/plain",
-    "userId": "test_user"
-  }' | jq -r '.uploadId')
+    "file_name": "test.txt",
+    "total_size": 13,
+    "user_role": "creator",
+    "content_type": "text/plain",
+    "user_id": "test_user"
+  }')
+
+UPLOAD_ID=$(echo $UPLOAD_RESPONSE | jq -r '.upload_id')
 
 # 2. Upload chunk
-ETAG=$(curl -X POST "https://your-worker.workers.dev/v1/uploads/${UPLOAD_ID}/chunk" \
+curl -X PUT "https://your-worker.workers.dev/api/upload/chunk" \
   -H "Content-Type: application/octet-stream" \
   -H "X-Upload-Id: ${UPLOAD_ID}" \
-  -H "X-Chunk-Index: 1" \
-  -d "Hello, World!" | jq -r '.etag')
+  -H "X-Chunk-Index: 0" \
+  -d "Hello, World!"
 
 # 3. Complete upload
-curl -X POST "https://your-worker.workers.dev/v1/uploads/${UPLOAD_ID}/complete" \
+curl -X POST "https://your-worker.workers.dev/api/upload/complete" \
   -H "Content-Type: application/json" \
-  -d "{
-    \"uploadId\": \"${UPLOAD_ID}\",
-    \"parts\": [{
-      \"etag\": \"${ETAG}\",
-      \"partNumber\": 1
-    }]
-  }"
+  -d "{\"upload_id\": \"${UPLOAD_ID}\"}"
+
+# 4. Check status
+curl -X GET "https://your-worker.workers.dev/api/upload/${UPLOAD_ID}/status"
 ```
 
 ## Troubleshooting
@@ -522,25 +638,34 @@ curl -X POST "https://your-worker.workers.dev/v1/uploads/${UPLOAD_ID}/complete" 
 ### Common Issues
 
 **Upload Fails with 413 Status**
-
-- Check file size against configured maximum
-- Verify `totalSize` matches actual file size
+- Check file size against configured maximum (default 10GB)
+- Verify `total_size` matches actual file size
 
 **Chunk Upload Returns 404**
-
 - Verify upload was properly initialized
-- Check `X-Upload-Id` header matches returned `uploadId`
+- Check `X-Upload-Id` header matches returned `upload_id`
+- Ensure upload hasn't been cancelled or completed
 
 **Complete Upload Fails with 400**
+- Verify all chunks have been uploaded successfully
+- Check upload status before attempting completion
 
-- Ensure all chunks have been uploaded
-- Verify ETags in parts array match chunk upload responses
-- Check that part numbers are sequential starting from 1
+**Database Errors (502)**
+- Verify D1 database is properly configured in wrangler.toml
+- Check database schema is applied correctly
+- Monitor D1 database metrics in Cloudflare dashboard
 
 **Performance Issues**
-
 - Adjust chunk size based on network conditions
 - Implement retry logic for failed chunk uploads
 - Use parallel chunk uploads for better throughput
+- Monitor R2 and D1 performance metrics
 
-For additional support, check the server logs via `wrangler tail` command.
+### Monitoring
+
+- Use `wrangler tail` for real-time log monitoring
+- Check Cloudflare Analytics for request metrics
+- Monitor D1 database query performance
+- Track R2 storage operations and costs
+
+For additional support, consult the Cloudflare Workers documentation and community forums.
