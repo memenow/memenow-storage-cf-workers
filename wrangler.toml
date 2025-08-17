@@ -1,7 +1,10 @@
 name = "memenow-storage-cf-workers"
 main = "build/worker/shim.mjs"
-compatibility_date = "2024-06-30"
+compatibility_date = "2025-08-15"
 logpush = true
+
+[placement]
+mode = "smart"
 
 [build]
 command = "cargo install -q worker-build && worker-build --release"
