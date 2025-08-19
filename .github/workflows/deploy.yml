@@ -33,8 +33,11 @@ jobs:
           # Replace placeholders with actual secret values
           sed -i 's/${PROD_KV_NAMESPACE_ID}/${{ secrets.PROD_KV_NAMESPACE_ID }}/g' wrangler.toml
           sed -i 's/${DEV_KV_NAMESPACE_ID}/${{ secrets.DEV_KV_NAMESPACE_ID }}/g' wrangler.toml
+          sed -i 's/${PROD_D1_DATABASE_NAME}/${{ secrets.PROD_D1_DATABASE_NAME }}/g' wrangler.toml
           sed -i 's/${PROD_D1_DATABASE_ID}/${{ secrets.PROD_D1_DATABASE_ID }}/g' wrangler.toml
           sed -i 's/${DEV_D1_DATABASE_ID}/${{ secrets.DEV_D1_DATABASE_ID }}/g' wrangler.toml
+          sed -i 's/${PROD_R2_BUCKET}/${{ secrets.PROD_R2_BUCKET }}/g' wrangler.toml
+          sed -i 's/${DEV_R2_BUCKET}/${{ secrets.DEV_R2_BUCKET }}/g' wrangler.toml
 
       - name: Build project
         run: |

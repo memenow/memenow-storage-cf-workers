@@ -24,3 +24,6 @@ binding = "UPLOAD_DB"
 database_name = "xxxx"
 database_id = "your-prod-d1-database-id"
 preview_database_id = "your-dev-d1-database-id"
+
+[observability.logs]
+enabled = true
