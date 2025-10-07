@@ -23,10 +23,10 @@
 //! println!("Max file size: {} bytes", config.max_file_size);
 //! ```
 
+use crate::constants::{DEFAULT_CHUNK_SIZE, DEFAULT_MAX_FILE_SIZE, UPLOAD_DB_NAME};
+use serde::{Deserialize, Serialize};
 use worker::kv::KvStore;
 use worker::{console_log, Result};
-use serde::{Deserialize, Serialize};
-use crate::constants::{DEFAULT_MAX_FILE_SIZE, DEFAULT_CHUNK_SIZE, UPLOAD_DB_NAME};
 
 /// Configuration structure for the file storage service.
 ///
@@ -38,11 +38,11 @@ pub struct Config {
     /// Name of the D1 database binding used for upload state tracking.
     /// Must match the binding name in wrangler.toml.
     pub database_name: String,
-    
+
     /// Maximum allowed file size in bytes.
     /// Files exceeding this limit will be rejected during upload initialization.
     pub max_file_size: u64,
-    
+
     /// Size of individual upload chunks in bytes.
     /// Larger chunks reduce the number of requests but increase memory usage.
     pub chunk_size: usize,
@@ -103,7 +103,7 @@ impl Config {
     /// - If KV storage is accessible but no config exists, uses defaults
     /// - If KV storage throws an error, the error is propagated up
     /// - Invalid JSON in storage will cause parsing errors
-    /// 
+    ///
     /// # Performance Notes
     ///
     /// Configuration should be loaded once per request and shared via Arc
@@ -113,7 +113,7 @@ impl Config {
             Some(config) => {
                 console_log!("Configuration loaded from KV storage");
                 Ok(config)
-            },
+            }
             None => {
                 console_log!("Config not found in KV, using default");
                 Ok(Self::default())

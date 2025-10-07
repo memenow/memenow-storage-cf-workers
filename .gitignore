@@ -405,3 +405,7 @@ public
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+./serena
+CLAUDE.md
+AGENTS.md

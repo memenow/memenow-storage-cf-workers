@@ -30,16 +30,16 @@
 //! });
 //! let key = generate_r2_key(&request_body);
 //! // Result: "creator/user123/20240115/video/video.mp4"
-//! 
+//!
 //! // Generate unique upload ID
 //! let upload_id = generate_unique_identifier();
 //! // Result: "1641987000000-550e8400-e29b-41d4-a716-446655440000-123456789"
 //! ```
 
-use worker::Headers;
-use uuid::Uuid;
+use crate::constants::{CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, CORS_ALLOW_ORIGIN};
 use chrono::Utc;
-use crate::constants::{CORS_ALLOW_ORIGIN, CORS_ALLOW_METHODS, CORS_ALLOW_HEADERS};
+use uuid::Uuid;
+use worker::Headers;
 
 /// Generates an R2 storage key based on user context and file metadata.
 ///
@@ -79,7 +79,7 @@ use crate::constants::{CORS_ALLOW_ORIGIN, CORS_ALLOW_METHODS, CORS_ALLOW_HEADERS
 ///
 /// ```rust
 /// use crate::models::UserRole;
-/// 
+///
 /// let key = generate_r2_key(&UserRole::Creator, "user123", "profile.jpg", "image/jpeg");
 /// // Returns: "creator/user123/20240115/image/profile.jpg"
 /// ```
@@ -90,16 +90,24 @@ use crate::constants::{CORS_ALLOW_ORIGIN, CORS_ALLOW_METHODS, CORS_ALLOW_HEADERS
 /// - Validates user role against allowed values
 /// - Limits field lengths to prevent excessive storage paths
 /// - Removes dangerous characters from all components
-pub fn generate_r2_key(user_role: &crate::models::UserRole, user_id: &str, file_name: &str, content_type: &str) -> String {
+pub fn generate_r2_key(
+    user_role: &crate::models::UserRole,
+    user_id: &str,
+    file_name: &str,
+    content_type: &str,
+) -> String {
     let role_str = sanitize_path_component(user_role.as_str());
     let user_id_safe = sanitize_path_component(user_id);
     let file_name_safe = sanitize_filename(file_name);
     let date = Utc::now().format("%Y%m%d").to_string();
-    
+
     // Determine content category based on MIME type
     let category = categorize_content_type(content_type);
-    
-    format!("{}/{}/{}/{}/{}", role_str, user_id_safe, date, category, file_name_safe)
+
+    format!(
+        "{}/{}/{}/{}/{}",
+        role_str, user_id_safe, date, category, file_name_safe
+    )
 }
 
 /// Sanitizes a path component to prevent security issues.
@@ -137,14 +145,19 @@ fn sanitize_path_component(component: &str) -> String {
 /// Returns a sanitized filename safe for storage.
 fn sanitize_filename(filename: &str) -> String {
     let filename = filename.trim();
-    
+
     // Remove path separators and dangerous characters
-    let safe_chars: String = filename
+    let mut safe_chars: String = filename
         .chars()
-        .filter(|c| !"/\\:*?\"<>|".contains(*c))
+        .filter(|c| !c.is_control() && !"/\\:*?\"<>|".contains(*c))
         .take(255) // Limit filename length
         .collect();
-        
+
+    // Prevent leading dots that could create hidden files or traversal patterns.
+    if safe_chars.starts_with('.') {
+        safe_chars = safe_chars.trim_start_matches('.').to_string();
+    }
+
     if safe_chars.is_empty() {
         "unknown".to_string()
     } else {
@@ -163,7 +176,7 @@ fn sanitize_filename(filename: &str) -> String {
 /// Returns a category string for directory organization.
 fn categorize_content_type(content_type: &str) -> &'static str {
     let content_type = content_type.to_lowercase();
-    
+
     if content_type.starts_with("image/") {
         "image"
     } else if content_type.starts_with("video/") {
@@ -257,4 +270,54 @@ pub fn cors_headers() -> Headers {
     let _ = headers.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
     let _ = headers.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
     headers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::UserRole;
+
+    #[test]
+    fn generate_r2_key_structures_path() {
+        let key = generate_r2_key(
+            &UserRole::Creator,
+            "User_123",
+            "../payload.mp4",
+            "video/mp4",
+        );
+
+        let segments: Vec<&str> = key.split('/').collect();
+        assert_eq!(
+            segments.len(),
+            5,
+            "expected role/user/date/category/filename"
+        );
+        assert_eq!(segments[0], "creator");
+        assert_eq!(segments[1], "user_123");
+        assert_eq!(segments[3], "video");
+        assert_eq!(segments[4], "payload.mp4");
+    }
+
+    #[test]
+    fn generate_r2_key_defaults_to_other_category() {
+        let key = generate_r2_key(
+            &UserRole::Member,
+            "abc",
+            "report.bin",
+            "application/octet-stream",
+        );
+        let segments: Vec<&str> = key.split('/').collect();
+        assert_eq!(segments[3], "other");
+    }
+
+    #[test]
+    fn sanitize_filename_removes_path_traversal_characters() {
+        let cleaned = super::sanitize_filename("../.\u{0000}payload?.mp4");
+        assert_eq!(cleaned, "payload.mp4");
+    }
+
+    #[test]
+    fn sanitize_filename_returns_unknown_when_empty() {
+        assert_eq!(super::sanitize_filename("   "), "unknown");
+    }
 }

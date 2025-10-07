@@ -17,8 +17,8 @@
 //! - Metadata includes comprehensive tracking information
 //! - UTC timestamps for global consistency
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// User role enumeration for file organization and access control.
 ///
@@ -33,6 +33,7 @@ use chrono::{DateTime, Utc};
 /// - `Member`: `/member/{user_id}/{date}/{category}/{filename}`
 /// - `Subscriber`: `/subscriber/{user_id}/{date}/{category}/{filename}`
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
 pub enum UserRole {
     /// Content creator with full upload privileges
     Creator,
@@ -87,7 +88,7 @@ impl std::str::FromStr for UserRole {
     ///
     /// ```rust
     /// use std::str::FromStr;
-    /// 
+    ///
     /// let role = UserRole::from_str("CREATOR").unwrap();
     /// assert_eq!(role, UserRole::Creator);
     /// ```
@@ -126,44 +127,44 @@ pub struct UploadMetadata {
     /// Unique identifier for this upload session.
     /// Generated using UUID v4 with timestamp and random components.
     pub upload_id: String,
-    
+
     /// Original filename as provided by the client.
     /// Used in the final R2 storage path.
     pub file_name: String,
-    
+
     /// Total size of the file being uploaded in bytes.
     /// Validated against configured maximum file size.
     pub total_size: u64,
-    
+
     /// UTC timestamp when the upload was initiated.
     /// Used for tracking upload duration and cleanup.
     pub created_at: DateTime<Utc>,
-    
+
     /// UTC timestamp of the last metadata update.
     /// Updated whenever upload progress changes.
     pub updated_at: DateTime<Utc>,
-    
+
     /// User role determining file organization structure.
     pub user_role: UserRole,
-    
+
     /// MIME content type of the uploaded file.
     /// Used for content category determination and validation.
     pub content_type: String,
-    
+
     /// Current status of the upload operation.
     pub status: UploadStatus,
-    
+
     /// Vector of chunk indices that have been successfully uploaded.
     /// Used to track progress and handle resumable uploads.
     pub chunks: Vec<u16>,
-    
+
     /// R2 storage key where the file will be stored.
     /// Generated based on user role, ID, date, and content type.
     pub r2_key: String,
-    
+
     /// Identifier of the user performing the upload.
     pub user_id: String,
-    
+
     /// R2 multipart upload identifier.
     /// Required for completing the multipart upload operation.
     pub r2_upload_id: String,
@@ -186,16 +187,90 @@ pub struct UploadMetadata {
 /// Cancelled <- Cancelled
 /// ```
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum UploadStatus {
     /// Upload session has been created but no chunks have been uploaded yet.
     Initiated,
-    
+
     /// Upload is in progress with one or more chunks successfully uploaded.
     InProgress,
-    
+
     /// Upload has been completed successfully and file is available in R2.
     Completed,
-    
+
     /// Upload has been cancelled and any uploaded chunks have been cleaned up.
     Cancelled,
+}
+
+impl UploadStatus {
+    /// Returns the lowercase string representation for storage and API responses.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            UploadStatus::Initiated => "initiated",
+            UploadStatus::InProgress => "in_progress",
+            UploadStatus::Completed => "completed",
+            UploadStatus::Cancelled => "cancelled",
+        }
+    }
+}
+
+impl std::str::FromStr for UploadStatus {
+    type Err = String;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+        match value.to_lowercase().as_str() {
+            "initiated" => Ok(UploadStatus::Initiated),
+            "in_progress" => Ok(UploadStatus::InProgress),
+            "completed" => Ok(UploadStatus::Completed),
+            "cancelled" => Ok(UploadStatus::Cancelled),
+            other => Err(format!("Invalid upload status: {}", other)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn user_role_to_string_is_lowercase() {
+        assert_eq!(UserRole::Creator.as_str(), "creator");
+        assert_eq!(UserRole::Member.as_str(), "member");
+        assert_eq!(UserRole::Subscriber.as_str(), "subscriber");
+    }
+
+    #[test]
+    fn user_role_parse_is_case_insensitive() {
+        assert_eq!(UserRole::from_str("CREATOR").unwrap(), UserRole::Creator);
+        assert_eq!(UserRole::from_str("Member").unwrap(), UserRole::Member);
+        assert_eq!(
+            UserRole::from_str("subscriber").unwrap(),
+            UserRole::Subscriber
+        );
+        assert!(UserRole::from_str("unknown").is_err());
+    }
+
+    #[test]
+    fn upload_status_roundtrip() {
+        for status in [
+            UploadStatus::Initiated,
+            UploadStatus::InProgress,
+            UploadStatus::Completed,
+            UploadStatus::Cancelled,
+        ] {
+            let as_str = status.as_str();
+            let parsed = UploadStatus::from_str(as_str).unwrap();
+            assert_eq!(status, parsed);
+        }
+    }
+
+    #[test]
+    fn upload_status_parse_is_case_insensitive() {
+        assert_eq!(
+            UploadStatus::from_str("IN_Progress").unwrap(),
+            UploadStatus::InProgress
+        );
+        assert!(UploadStatus::from_str("done").is_err());
+    }
 }

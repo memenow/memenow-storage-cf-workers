@@ -35,21 +35,23 @@
 //! POST /api/upload/cancel           - Cancel an upload
 //! ```
 
+use std::sync::{Arc, OnceLock};
 use worker::*;
-use std::sync::Arc;
 
 mod config;
 mod constants;
-mod models;
-mod utils;
 mod database;
-mod handlers;
-mod router;
 mod errors;
+mod handlers;
 mod middleware;
+mod models;
+mod router;
+mod utils;
 
 use config::Config;
 use constants::STORAGE_CONFIG_KV_NAME;
+
+static CONFIG_CACHE: OnceLock<Arc<Config>> = OnceLock::new();
 
 /// Main entry point for the Cloudflare Worker.
 ///
@@ -86,10 +88,19 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 
     console_log!("Request: {} {}", req.method(), req.url()?.path());
 
-    // Load configuration from KV storage with fallback to defaults
-    let kv = env.kv(STORAGE_CONFIG_KV_NAME)?;
-    let config = Arc::new(Config::load(&kv).await?);
+    let config = load_config(&env).await?;
 
     // Route the request to appropriate handlers
     router::handle_request(req, env, config).await
+}
+
+async fn load_config(env: &Env) -> Result<Arc<Config>> {
+    if let Some(config) = CONFIG_CACHE.get() {
+        return Ok(config.clone());
+    }
+
+    let kv = env.kv(STORAGE_CONFIG_KV_NAME)?;
+    let config = Arc::new(Config::load(&kv).await?);
+    let _ = CONFIG_CACHE.set(config.clone());
+    Ok(config)
 }
