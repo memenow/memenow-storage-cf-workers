@@ -31,10 +31,10 @@
 //! let (upload_id, chunk_index) = ValidationMiddleware::validate_upload_headers(&req)?;
 //! ```
 
-use worker::*;
-use crate::utils::cors_headers;
+use crate::constants::{HEADER_CHUNK_INDEX, HEADER_UPLOAD_ID};
 use crate::errors::{AppError, AppResult};
-use crate::constants::{HEADER_UPLOAD_ID, HEADER_CHUNK_INDEX};
+use crate::utils::cors_headers;
+use worker::*;
 
 /// Middleware for handling Cross-Origin Resource Sharing (CORS) requests.
 ///
@@ -79,7 +79,7 @@ impl CorsMiddleware {
     pub fn apply_headers(response: Response) -> Response {
         response.with_headers(cors_headers())
     }
-    
+
     /// Handles CORS preflight requests (OPTIONS method).
     ///
     /// Preflight requests are sent by browsers before making cross-origin
@@ -107,6 +107,34 @@ impl CorsMiddleware {
     /// - Non-simple content types
     pub fn handle_preflight() -> Result<Response> {
         Ok(Response::empty()?.with_headers(cors_headers()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_file_size_allows_within_limit() {
+        assert!(ValidationMiddleware::validate_file_size(1_048_576, 10_485_760).is_ok());
+    }
+
+    #[test]
+    fn validate_file_size_rejects_over_limit() {
+        let err = ValidationMiddleware::validate_file_size(20, 10).unwrap_err();
+        assert!(matches!(err, AppError::FileSizeExceeded { .. }));
+    }
+
+    #[test]
+    fn validate_content_type_accepts_known_prefix() {
+        assert!(ValidationMiddleware::validate_content_type("image/png").is_ok());
+    }
+
+    #[test]
+    fn validate_content_type_rejects_unknown_type() {
+        let err =
+            ValidationMiddleware::validate_content_type("application/x-msdownload").unwrap_err();
+        assert!(matches!(err, AppError::InvalidField { .. }));
     }
 }
 
@@ -166,25 +194,25 @@ impl ValidationMiddleware {
         let upload_id = req
             .headers()
             .get(HEADER_UPLOAD_ID)?
-            .ok_or(AppError::MissingField { 
-                field: format!("{} header", HEADER_UPLOAD_ID)
+            .ok_or(AppError::MissingField {
+                field: format!("{} header", HEADER_UPLOAD_ID),
             })?;
-            
+
         let chunk_index = req
             .headers()
             .get(HEADER_CHUNK_INDEX)?
-            .ok_or(AppError::MissingField { 
-                field: format!("{} header", HEADER_CHUNK_INDEX)
+            .ok_or(AppError::MissingField {
+                field: format!("{} header", HEADER_CHUNK_INDEX),
             })?
             .parse::<u16>()
             .map_err(|_| AppError::InvalidField {
                 field: HEADER_CHUNK_INDEX.to_string(),
                 reason: "Must be a valid number".to_string(),
             })?;
-            
+
         Ok((upload_id, chunk_index))
     }
-    
+
     /// Validates that a file size is within configured limits.
     ///
     /// This method checks that the proposed file size does not exceed
@@ -213,14 +241,14 @@ impl ValidationMiddleware {
     /// ```
     pub fn validate_file_size(size: u64, max_size: u64) -> AppResult<()> {
         if size > max_size {
-            return Err(AppError::FileSizeExceeded { 
-                size, 
-                max: max_size 
+            return Err(AppError::FileSizeExceeded {
+                size,
+                max: max_size,
             });
         }
         Ok(())
     }
-    
+
     /// Validates that a content type is supported by the service.
     ///
     /// This method checks the MIME type of uploaded files against a
@@ -263,17 +291,25 @@ impl ValidationMiddleware {
     /// to verify that the actual file content matches the declared type.
     pub fn validate_content_type(content_type: &str) -> AppResult<()> {
         const ALLOWED_TYPES: &[&str] = &[
-            "image/", "video/", "audio/", "text/", "application/json",
-            "application/pdf", "application/zip"
+            "image/",
+            "video/",
+            "audio/",
+            "text/",
+            "application/json",
+            "application/pdf",
+            "application/zip",
         ];
-        
-        if !ALLOWED_TYPES.iter().any(|&allowed| content_type.starts_with(allowed)) {
+
+        if !ALLOWED_TYPES
+            .iter()
+            .any(|&allowed| content_type.starts_with(allowed))
+        {
             return Err(AppError::InvalidField {
                 field: "contentType".to_string(),
                 reason: "Unsupported file type".to_string(),
             });
         }
-        
+
         Ok(())
     }
 }

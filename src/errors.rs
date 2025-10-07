@@ -30,9 +30,9 @@
 //! }
 //! ```
 
+use serde_json::json;
 use thiserror::Error;
 use worker::{Error as WorkerError, Response, Result};
-use serde_json::json;
 
 /// Application error enumeration covering all possible error conditions.
 ///
@@ -50,115 +50,115 @@ use serde_json::json;
 pub enum AppError {
     /// Required field is missing from request payload or headers.
     #[error("Missing required field: {field}")]
-    MissingField { 
+    MissingField {
         /// Name of the missing field
-        field: String 
+        field: String,
     },
 
     /// Request validation error (replaces MissingField and InvalidField for simplicity).
     #[error("Validation error: {message}")]
-    ValidationError { 
+    ValidationError {
         /// Validation error message
-        message: String 
+        message: String,
     },
 
     /// Resource not found error.
     #[error("Not found: {message}")]
-    NotFoundError { 
+    NotFoundError {
         /// Not found error message
-        message: String 
+        message: String,
     },
-    
+
     /// Field contains invalid or malformed data.
     #[error("Invalid field value: {field} - {reason}")]
-    InvalidField { 
+    InvalidField {
         /// Name of the invalid field
-        field: String, 
+        field: String,
         /// Explanation of why the field is invalid
-        reason: String 
+        reason: String,
     },
-    
+
     /// File size exceeds the configured maximum limit.
     #[error("File size {size} exceeds maximum allowed {max}")]
-    FileSizeExceeded { 
+    FileSizeExceeded {
         /// Actual file size in bytes
-        size: u64, 
+        size: u64,
         /// Maximum allowed size in bytes
-        max: u64 
+        max: u64,
     },
-    
+
     /// Upload session not found in storage.
     #[error("Upload not found: {upload_id}")]
-    UploadNotFound { 
+    UploadNotFound {
         /// Upload identifier that was not found
-        upload_id: String 
+        upload_id: String,
     },
-    
+
     /// Attempt to modify an upload that has already been completed.
     #[error("Upload already completed: {upload_id}")]
-    UploadAlreadyCompleted { 
+    UploadAlreadyCompleted {
         /// Upload identifier for the completed upload
-        upload_id: String 
+        upload_id: String,
     },
-    
+
     /// Attempt to operate on a cancelled upload.
     #[error("Upload cancelled: {upload_id}")]
-    UploadCancelled { 
+    UploadCancelled {
         /// Upload identifier for the cancelled upload
-        upload_id: String 
+        upload_id: String,
     },
-    
+
     /// Chunk index is invalid or out of sequence.
     #[error("Invalid chunk index: {index}")]
-    InvalidChunkIndex { 
+    InvalidChunkIndex {
         /// The invalid chunk index
-        index: u16 
+        index: u16,
     },
-    
+
     /// R2 storage operation failure.
     #[error("R2 storage error: {message}")]
-    R2Error { 
+    R2Error {
         /// Detailed error message from R2 operation
-        message: String 
+        message: String,
     },
-    
+
     /// KV storage operation failure.
     #[error("KV storage error: {message}")]
-    KvError { 
+    KvError {
         /// Detailed error message from KV operation
-        message: String 
+        message: String,
     },
-    
+
     /// D1 Database operation failure.
     #[error("Database error: {message}")]
-    DatabaseError { 
+    DatabaseError {
         /// Detailed error message from database operation
         message: String,
     },
-    
+
     /// Configuration loading or validation error.
     #[error("Configuration error: {message}")]
-    ConfigError { 
+    ConfigError {
         /// Detailed configuration error message
-        message: String 
+        message: String,
     },
-    
+
     /// Authentication or authorization failure.
     #[error("Authentication error: {message}")]
-    AuthError { 
+    AuthError {
         /// Detailed authentication error message
-        message: String 
+        message: String,
     },
-    
+
     /// Rate limiting threshold exceeded.
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
-    
+
     /// Unexpected internal server error.
     #[error("Internal server error: {message}")]
-    InternalError { 
+    InternalError {
         /// Detailed internal error message
-        message: String 
+        message: String,
     },
 }
 
@@ -197,22 +197,28 @@ impl AppError {
     /// - **500**: Internal server errors (config, durable object)
     /// - **502**: External service errors (R2, KV)
     pub fn to_response(&self) -> Result<Response> {
-        let (status, error_code, message) = match self {
+        let (status, error_code, message) = self.response_parts();
+
+        let error_response = json!({
+            "error": {
+                "code": error_code,
+                "message": message,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }
+        });
+
+        Ok(Response::from_json(&error_response)?.with_status(status))
+    }
+
+    fn response_parts(&self) -> (u16, &'static str, String) {
+        match self {
             AppError::MissingField { field } => (
                 400,
                 "MISSING_FIELD",
                 format!("Missing required field: {}", field),
             ),
-            AppError::ValidationError { message } => (
-                400,
-                "VALIDATION_ERROR",
-                message.clone(),
-            ),
-            AppError::NotFoundError { message } => (
-                404,
-                "NOT_FOUND",
-                message.clone(),
-            ),
+            AppError::ValidationError { message } => (400, "VALIDATION_ERROR", message.clone()),
+            AppError::NotFoundError { message } => (404, "NOT_FOUND", message.clone()),
             AppError::InvalidField { field, reason } => (
                 400,
                 "INVALID_FIELD",
@@ -243,21 +249,15 @@ impl AppError {
                 "INVALID_CHUNK_INDEX",
                 format!("Invalid chunk index: {}", index),
             ),
-            AppError::R2Error { message } => (
-                502,
-                "R2_ERROR",
-                format!("Storage error: {}", message),
-            ),
+            AppError::R2Error { message } => {
+                (502, "R2_ERROR", format!("Storage error: {}", message))
+            }
             AppError::KvError { message } => (
                 502,
                 "KV_ERROR",
                 format!("Configuration storage error: {}", message),
             ),
-            AppError::DatabaseError { message } => (
-                502,
-                "DATABASE_ERROR",
-                message.clone(),
-            ),
+            AppError::DatabaseError { message } => (502, "DATABASE_ERROR", message.clone()),
             AppError::ConfigError { message } => (
                 500,
                 "CONFIG_ERROR",
@@ -278,17 +278,7 @@ impl AppError {
                 "INTERNAL_ERROR",
                 format!("Internal server error: {}", message),
             ),
-        };
-
-        let error_response = json!({
-            "error": {
-                "code": error_code,
-                "message": message,
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            }
-        });
-
-        Ok(Response::from_json(&error_response)?.with_status(status))
+        }
     }
 }
 
@@ -307,23 +297,17 @@ impl AppError {
 impl From<WorkerError> for AppError {
     fn from(err: WorkerError) -> Self {
         let error_msg = err.to_string();
-        
+
         if error_msg.contains("not found") {
             AppError::DatabaseError {
                 message: error_msg.to_string(),
             }
         } else if error_msg.contains("KV") || error_msg.contains("kv") {
-            AppError::KvError {
-                message: error_msg,
-            }
+            AppError::KvError { message: error_msg }
         } else if error_msg.contains("R2") || error_msg.contains("bucket") {
-            AppError::R2Error {
-                message: error_msg,
-            }
+            AppError::R2Error { message: error_msg }
         } else {
-            AppError::InternalError {
-                message: error_msg,
-            }
+            AppError::InternalError { message: error_msg }
         }
     }
 }
@@ -342,3 +326,29 @@ impl From<WorkerError> for AppError {
 /// }
 /// ```
 pub type AppResult<T> = std::result::Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn missing_field_converts_to_400_response() {
+        let error = AppError::MissingField {
+            field: "file_name".into(),
+        };
+
+        let (status, code, message) = error.response_parts();
+        assert_eq!(status, 400);
+        assert_eq!(code, "MISSING_FIELD");
+        assert!(message.contains("file_name"));
+    }
+
+    #[test]
+    fn file_size_exceeded_converts_to_413_response() {
+        let error = AppError::FileSizeExceeded { size: 20, max: 10 };
+
+        let (status, code, message) = error.response_parts();
+        assert_eq!(status, 413);
+        assert_eq!(code, "FILE_TOO_LARGE");
+        assert!(message.contains("20"));
+    }
+}

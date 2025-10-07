@@ -27,11 +27,11 @@
 //! - **Database Integration**: Seamless delegation to D1 Database handlers
 //! - **Extensibility**: Easy to add new route patterns
 
-use worker::*;
 use std::sync::Arc;
+use worker::*;
 
 use crate::config::Config;
-use crate::handlers::{handle_upload_routes, handle_health_check, handle_not_found};
+use crate::handlers::{handle_health_check, handle_not_found, handle_upload_routes};
 use crate::middleware::CorsMiddleware;
 
 /// Handles incoming HTTP requests and routes them to appropriate handlers.
@@ -61,7 +61,7 @@ use crate::middleware::CorsMiddleware;
 /// # Route Patterns
 ///
 /// - **Health Check**: `GET /health` → `handle_health_check`
-/// - **Upload Operations**: `/v1/uploads/*` → `handle_upload_routes`
+/// - **Upload Operations**: `/api/upload/*` → `handle_upload_routes`
 /// - **CORS Preflight**: `OPTIONS *` → `CorsMiddleware::handle_preflight`
 /// - **Unmatched**: `* *` → `handle_not_found`
 ///
@@ -97,19 +97,19 @@ pub async fn handle_request(req: Request, env: Env, config: Arc<Config>) -> Resu
     match (method, path) {
         // Health check endpoint for monitoring and load balancer probes
         (Method::Get, "/health") => handle_health_check(req, env).await,
-        
+
         // Upload routes - all upload operations are delegated to D1 Database
         // This ensures state consistency and proper handling of concurrent operations
         (Method::Post, path) if path.starts_with("/api/upload") => {
             handle_upload_routes(req, env, config).await
-        },
+        }
         (Method::Put, path) if path.starts_with("/api/upload") => {
             handle_upload_routes(req, env, config).await
-        },
+        }
         (Method::Get, path) if path.starts_with("/api/upload") => {
             handle_upload_routes(req, env, config).await
-        },
-        
+        }
+
         // Default 404 handler for unmatched routes
         _ => handle_not_found(req, env).await,
     }
