@@ -1,8 +1,7 @@
 //! # D1 Database Service
 //!
 //! This module provides database operations for upload tracking using Cloudflare D1.
-//! It replaces the previous Durable Objects implementation with a SQL-based approach
-//! for better scalability and query capabilities.
+//! It implements a SQL-based approach for scalable state management and query capabilities.
 //!
 //! ## Core Features
 //!
@@ -254,6 +253,7 @@ impl DatabaseService {
         Ok(uploads)
     }
 
+    /// Queries all chunks for an upload, ordered by index.
     async fn fetch_chunks(&self, upload_id: &str) -> AppResult<Vec<UploadChunkRecord>> {
         let statement = self.db.prepare(
             "SELECT chunk_index, chunk_size, etag
@@ -282,6 +282,7 @@ impl DatabaseService {
     }
 }
 
+/// Raw row deserialized from the D1 `uploads` table.
 #[derive(Debug, Deserialize)]
 struct UploadRow {
     upload_id: String,
@@ -297,6 +298,7 @@ struct UploadRow {
     updated_at: String,
 }
 
+/// Raw row deserialized from the D1 `upload_chunks` table.
 #[derive(Debug, Deserialize)]
 struct ChunkRow {
     chunk_index: f64,
@@ -351,6 +353,7 @@ impl UploadRow {
     }
 }
 
+/// Returns a closure mapping `worker::Error` to `AppError::DatabaseError` tagged with the operation name.
 fn map_d1_error(operation: &'static str) -> impl Fn(worker::Error) -> AppError {
     move |err| AppError::DatabaseError {
         message: format!("{operation} failed: {err}"),

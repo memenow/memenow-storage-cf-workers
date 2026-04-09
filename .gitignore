@@ -165,6 +165,8 @@ config.local.json
 
 # AI Tools & Assistants
 .claude/
+!.claude/skills/
+!.claude/settings.json
 .serena/
 .cursor/
 .copilot/
@@ -407,5 +409,4 @@ public
 .pnp.*
 
 ./serena
-CLAUDE.md
 AGENTS.md

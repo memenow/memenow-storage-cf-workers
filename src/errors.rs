@@ -44,7 +44,7 @@ use worker::{Error as WorkerError, Response, Result};
 ///
 /// - **Validation Errors**: Missing or invalid input data
 /// - **Business Logic Errors**: Upload state violations, size limits
-/// - **Storage Errors**: Failures in R2, KV, or Durable Object operations
+/// - **Storage Errors**: Failures in R2, KV, or D1 database operations
 /// - **System Errors**: Configuration issues, rate limiting, internal failures
 #[derive(Error, Debug)]
 pub enum AppError {
@@ -194,7 +194,7 @@ impl AppError {
     /// - **409**: Conflict errors (upload already completed/cancelled)
     /// - **413**: Payload too large (file size exceeded)
     /// - **429**: Rate limit exceeded
-    /// - **500**: Internal server errors (config, durable object)
+    /// - **500**: Internal server errors (config, internal)
     /// - **502**: External service errors (R2, KV)
     pub fn to_response(&self) -> Result<Response> {
         let (status, error_code, message) = self.response_parts();
