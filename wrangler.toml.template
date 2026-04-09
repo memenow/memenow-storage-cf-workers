@@ -1,7 +1,9 @@
 name = "memenow-storage-cf-workers"
 main = "build/worker/shim.mjs"
-compatibility_date = "2025-08-15"
-logpush = true
+compatibility_date = "2026-03-25"
+
+[observability]
+enabled = true
 
 [placement]
 mode = "smart"
