@@ -74,7 +74,7 @@ use crate::middleware::CorsMiddleware;
 /// ↓
 /// handle_upload_routes()
 /// ↓
-/// Durable Object → UploadTracker
+/// D1 Database → DatabaseService
 /// ```
 ///
 /// # Error Handling

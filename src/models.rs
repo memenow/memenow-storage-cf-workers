@@ -1,7 +1,7 @@
 //! # Data Models and Types
 //!
 //! This module defines the core data structures used throughout the file storage service.
-//! All models are designed to be serializable for storage in Durable Objects and
+//! All models are designed to be serializable for D1 database storage and
 //! network transmission via JSON APIs.
 //!
 //! ## Core Types
@@ -105,7 +105,7 @@ impl std::str::FromStr for UserRole {
 /// Complete metadata for an upload session.
 ///
 /// This structure contains all information needed to track and manage
-/// a multipart file upload. It is stored in Durable Objects and updated
+/// a multipart file upload. It is persisted in D1 and updated
 /// throughout the upload lifecycle.
 ///
 /// # Fields

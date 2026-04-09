@@ -50,14 +50,21 @@ All API responses follow a consistent error format with appropriate HTTP status 
 | Code | Status | Description |
 |------|--------|-------------|
 | `MISSING_FIELD` | 400 | Required field missing from request |
+| `VALIDATION_ERROR` | 400 | Request validation failed |
 | `INVALID_FIELD` | 400 | Field contains invalid value |
-| `FILE_TOO_LARGE` | 413 | File exceeds maximum size limit |
+| `INVALID_CHUNK_INDEX` | 400 | Chunk index out of range |
+| `AUTH_ERROR` | 401 | Authentication failure |
 | `UPLOAD_NOT_FOUND` | 404 | Upload ID not found |
+| `NOT_FOUND` | 404 | Resource not found |
 | `UPLOAD_COMPLETED` | 409 | Upload already completed |
 | `UPLOAD_CANCELLED` | 409 | Upload was cancelled |
+| `FILE_TOO_LARGE` | 413 | File exceeds maximum size limit |
+| `RATE_LIMIT_EXCEEDED` | 429 | Too many requests |
+| `CONFIG_ERROR` | 500 | Configuration error |
+| `INTERNAL_ERROR` | 500 | Internal server error |
 | `DATABASE_ERROR` | 502 | Database operation failed |
 | `R2_ERROR` | 502 | R2 storage operation failed |
-| `RATE_LIMIT_EXCEEDED` | 429 | Too many requests |
+| `KV_ERROR` | 502 | KV storage operation failed |
 
 ## API Endpoints
 

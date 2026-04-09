@@ -17,6 +17,7 @@ use crate::middleware::ValidationMiddleware;
 use crate::models::{UploadMetadata, UploadStatus, UserRole};
 use crate::utils::generate_r2_key;
 
+/// JSON payload for the upload initialization endpoint.
 #[derive(Debug, Deserialize)]
 struct UploadInitRequest {
     file_name: String,
@@ -27,6 +28,7 @@ struct UploadInitRequest {
     content_type: String,
 }
 
+/// JSON payload for complete and cancel endpoints.
 #[derive(Debug, Deserialize)]
 struct UploadLifecycleRequest {
     upload_id: String,
@@ -355,6 +357,7 @@ pub async fn get_upload_status(req: Request, env: &Env, config: &Config) -> AppR
     })
 }
 
+/// Converts chunk records into R2 `UploadedPart` values for multipart completion.
 fn build_uploaded_parts(chunks: &[UploadChunkRecord]) -> AppResult<Vec<UploadedPart>> {
     collect_part_descriptors(chunks).map(|descriptors| {
         descriptors
@@ -364,12 +367,14 @@ fn build_uploaded_parts(chunks: &[UploadChunkRecord]) -> AppResult<Vec<UploadedP
     })
 }
 
+/// Intermediate representation of an R2 part number and its ETag.
 #[derive(Debug, PartialEq, Eq)]
 struct PartDescriptor {
     part_number: u16,
     etag: String,
 }
 
+/// Extracts part number and ETag pairs from chunk records, failing if any ETag is missing.
 fn collect_part_descriptors(chunks: &[UploadChunkRecord]) -> AppResult<Vec<PartDescriptor>> {
     let mut parts = Vec::with_capacity(chunks.len());
 

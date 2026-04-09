@@ -94,6 +94,9 @@ pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     router::handle_request(req, env, config).await
 }
 
+/// Loads or retrieves cached configuration from KV storage.
+///
+/// Uses `OnceLock` to ensure config is parsed at most once per isolate lifetime.
 async fn load_config(env: &Env) -> Result<Arc<Config>> {
     if let Some(config) = CONFIG_CACHE.get() {
         return Ok(config.clone());

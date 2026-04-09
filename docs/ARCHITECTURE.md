@@ -2,7 +2,7 @@
 
 ## Overview
 
-MemeNow Storage is a high-performance, edge-based file storage service built with Rust and Cloudflare Workers. It provides robust chunked upload capabilities for large files using R2 storage, Durable Objects for state management, and KV storage for configuration.
+MemeNow Storage is a high-performance, edge-based file storage service built with Rust and Cloudflare Workers. It provides robust chunked upload capabilities for large files using R2 storage, D1 database for state management, and KV storage for configuration.
 
 ## System Architecture
 
@@ -23,25 +23,12 @@ MemeNow Storage is a high-performance, edge-based file storage service built wit
                       │
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                Durable Objects                             │
+│                  Storage & State                           │
 ├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │           Upload Tracker Instance                      │ │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │ │
-│  │  │   Upload    │  │   Chunk     │  │   R2 Upload     │ │ │
-│  │  │ Initiation  │  │ Processing  │  │  Coordination   │ │ │
-│  │  └─────────────┘  └─────────────┘  └─────────────────┘ │ │
-│  └─────────────────────────────────────────────────────────┘ │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Storage & Configuration                     │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────────┐  ┌─────────────────────────────────────┐ │
-│  │   KV Storage    │  │          R2 Object Storage          │ │
-│  │ (Configuration) │  │        (File Storage)               │ │
-│  └─────────────────┘  └─────────────────────────────────────┘ │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
+│  │ D1 Database  │  │  R2 Object   │  │   KV Storage     │  │
+│  │  (Metadata)  │  │  Storage     │  │ (Configuration)  │  │
+│  └──────────────┘  └──────────────┘  └──────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -66,22 +53,22 @@ MemeNow Storage is a high-performance, edge-based file storage service built wit
   - Content type validation
   - CORS header application
 
-### 3. Handlers Layer (`src/handlers.rs`)
+### 3. Handlers Layer (`src/handlers/`)
 - **Primary Function**: Business logic coordination
 - **Responsibilities**:
-  - Upload operation delegation to Durable Objects
+  - Upload operation delegation to D1 DatabaseService
   - Health check endpoint implementation
   - Error response handling
   - CORS header application to responses
 
-### 4. Durable Objects (`src/durable_objects/`)
-- **Primary Function**: Stateful upload session management
-- **UploadTracker Responsibilities**:
-  - Upload session lifecycle management
-  - R2 multipart upload coordination
-  - Chunk progress tracking
-  - State persistence across worker restarts
-  - Concurrent operation safety
+### 4. Database Layer (`src/database.rs`)
+- **Primary Function**: Persistent upload state management via D1
+- **DatabaseService Responsibilities**:
+  - Upload CRUD operations (create, read, update, delete)
+  - Chunk progress tracking with upsert semantics
+  - Status lifecycle management
+  - User upload listing with optional status filtering
+  - Row deserialization with timestamp and enum parsing
 
 ### 5. Models Layer (`src/models.rs`)
 - **Primary Function**: Data structure definitions
@@ -116,34 +103,31 @@ MemeNow Storage is a high-performance, edge-based file storage service built wit
 
 ### Upload Initialization Flow
 ```
-1. Client → POST /v1/uploads/init
+1. Client → POST /api/upload/init
 2. Router → CORS check → Upload handler
-3. Handler → Durable Object (UploadTracker)
-4. UploadTracker → Validate request → Create metadata
-5. UploadTracker → R2.create_multipart_upload()
-6. UploadTracker → Store metadata in DO storage
-7. Response → Upload ID + R2 key
+3. Handler → Validate request → R2.create_multipart_upload()
+4. Handler → DatabaseService.create_upload() → Persist metadata in D1
+5. Response → Upload ID + R2 key + chunk_size
 ```
 
 ### Chunk Upload Flow
 ```
-1. Client → POST /v1/uploads/{id}/chunk + headers
+1. Client → PUT /api/upload/chunk + headers
 2. Router → Validation middleware → Upload handler
-3. Handler → Durable Object (UploadTracker)
-4. UploadTracker → Load metadata → Validate state
-5. UploadTracker → R2.upload_part()
-6. UploadTracker → Update chunk progress → Save metadata
-7. Response → Chunk confirmation + ETag
+3. Handler → DatabaseService.get_upload() → Load metadata from D1
+4. Handler → Validate state → R2.upload_part()
+5. Handler → DatabaseService.record_chunk() → Update progress in D1
+6. Response → Chunk confirmation + ETag
 ```
 
 ### Upload Completion Flow
 ```
-1. Client → POST /v1/uploads/{id}/complete + parts list
-2. Router → Upload handler → Durable Object
-3. UploadTracker → Load metadata → Validate parts
-4. UploadTracker → R2.complete_multipart_upload()
-5. UploadTracker → Update status to Completed
-6. Response → Completion confirmation
+1. Client → POST /api/upload/complete
+2. Router → Upload handler
+3. Handler → DatabaseService.get_upload() → Load metadata + chunks from D1
+4. Handler → R2.complete_multipart_upload()
+5. Handler → DatabaseService.update_upload_status() → Mark completed in D1
+6. Response → Completion confirmation + R2 key
 ```
 
 ## File Organization Strategy
@@ -180,8 +164,8 @@ Files are organized in R2 storage using a hierarchical structure:
 - **Headers**: Content-Type, X-Upload-Id, X-Chunk-Index
 
 ### State Security
-- **Durable Object Isolation**: Each upload session isolated
-- **Metadata Protection**: Upload metadata stored in DO storage
+- **D1 ACID Compliance**: Upload operations are transactionally consistent
+- **Metadata Protection**: Upload metadata stored in D1 with foreign key constraints
 - **R2 Integration**: Secure coordination with R2 multipart uploads
 
 ## Performance Characteristics
@@ -231,7 +215,7 @@ Files are organized in R2 storage using a hierarchical structure:
 
 ### Logging
 - Request/response logging via `console_log!`
-- Operation tracing in Durable Objects
+- D1 query operation logging
 - Error context preservation
 
 ### Metrics (Future)
@@ -244,7 +228,7 @@ Files are organized in R2 storage using a hierarchical structure:
 
 ### Horizontal Scaling
 - **Edge Distribution**: Automatic global scaling via Cloudflare
-- **Durable Object Scaling**: Isolated state per upload session
+- **D1 Database Scaling**: Cloudflare-managed SQL with automatic replication
 - **R2 Scaling**: Virtually unlimited storage capacity
 
 ### Vertical Scaling
@@ -256,13 +240,13 @@ Files are organized in R2 storage using a hierarchical structure:
 - **File Size**: 10GB maximum (configurable)
 - **Chunk Size**: 150MB default (configurable)
 - **Concurrent Uploads**: Limited by client implementation
-- **Durable Object Limits**: Per Cloudflare's constraints
+- **D1 Limits**: Per Cloudflare's D1 database constraints
 
 ## Deployment Architecture
 
 ### Infrastructure Components
 - **Cloudflare Workers**: Serverless execution environment
-- **Durable Objects**: Stateful computing for upload sessions
+- **D1 Database**: SQL database for upload metadata and state management
 - **R2 Storage**: Object storage for files
 - **KV Storage**: Configuration and metadata storage
 
@@ -272,9 +256,9 @@ Files are organized in R2 storage using a hierarchical structure:
 - **Production**: Production workers with production resources
 
 ### Resource Bindings
-- `BUCKET`: R2 bucket binding for file storage
-- `CONFIG`: KV namespace for configuration
-- `UPLOAD_TRACKER`: Durable Object binding for state management
+- `STORAGE_BUCKET`: R2 bucket binding for file storage
+- `STORAGE_CONFIG`: KV namespace for configuration
+- `UPLOAD_DB`: D1 database binding for upload metadata
 
 ## Future Enhancements
 
@@ -288,7 +272,7 @@ Files are organized in R2 storage using a hierarchical structure:
 - **Webhook Support**: Upload completion notifications
 
 ### Scalability Enhancements
-- **Database Integration**: Metadata storage in databases
+- **Batch Operations**: Bulk upload management and cleanup
 - **Caching Layer**: Upload metadata caching
 - **Load Balancing**: Advanced request distribution
 - **Multi-Region**: Cross-region replication
