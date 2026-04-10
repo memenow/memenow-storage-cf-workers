@@ -63,7 +63,7 @@ jobs:
       - name: Initialize D1 Database Schema (Production)
         if: github.event_name == 'release'
         run: |
-          wrangler d1 execute prod-memenow-upload-metadata --file=schema.sql
+          wrangler d1 execute ${{ secrets.PROD_D1_DATABASE_ID }} --remote --file=schema.sql
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -71,7 +71,7 @@ jobs:
       - name: Initialize D1 Database Schema (Preview)
         if: github.event_name == 'push'
         run: |
-          wrangler d1 execute dev-memenow-upload-metadata --file=schema.sql
+          wrangler d1 execute ${{ secrets.DEV_D1_DATABASE_ID }} --remote --file=schema.sql
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
