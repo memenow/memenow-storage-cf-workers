@@ -4,7 +4,7 @@
 
 -- Upload metadata table
 -- Stores comprehensive information about file uploads
-CREATE TABLE uploads (
+CREATE TABLE IF NOT EXISTS uploads (
     -- Primary key: Unique upload identifier (UUID v4)
     upload_id TEXT PRIMARY KEY,
     
@@ -31,7 +31,7 @@ CREATE TABLE uploads (
 
 -- Upload chunks table
 -- Tracks individual chunks for multipart uploads
-CREATE TABLE upload_chunks (
+CREATE TABLE IF NOT EXISTS upload_chunks (
     -- Composite primary key
     upload_id TEXT NOT NULL,
     chunk_index INTEGER NOT NULL,
@@ -46,15 +46,15 @@ CREATE TABLE upload_chunks (
 );
 
 -- Create indexes for performance optimization
-CREATE INDEX idx_uploads_user_id ON uploads(user_id);
-CREATE INDEX idx_uploads_status ON uploads(status);
-CREATE INDEX idx_uploads_created_at ON uploads(created_at);
-CREATE INDEX idx_uploads_user_role ON uploads(user_role);
-CREATE INDEX idx_upload_chunks_upload_id ON upload_chunks(upload_id);
+CREATE INDEX IF NOT EXISTS idx_uploads_user_id ON uploads(user_id);
+CREATE INDEX IF NOT EXISTS idx_uploads_status ON uploads(status);
+CREATE INDEX IF NOT EXISTS idx_uploads_created_at ON uploads(created_at);
+CREATE INDEX IF NOT EXISTS idx_uploads_user_role ON uploads(user_role);
+CREATE INDEX IF NOT EXISTS idx_upload_chunks_upload_id ON upload_chunks(upload_id);
 
 -- Upload statistics view
 -- Provides aggregated statistics for monitoring
-CREATE VIEW upload_stats AS
+CREATE VIEW IF NOT EXISTS upload_stats AS
 SELECT 
     user_role,
     status,
@@ -68,7 +68,7 @@ GROUP BY user_role, status;
 
 -- Active uploads view
 -- Shows uploads currently in progress
-CREATE VIEW active_uploads AS
+CREATE VIEW IF NOT EXISTS active_uploads AS
 SELECT 
     upload_id,
     file_name,
