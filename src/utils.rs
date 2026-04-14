@@ -38,7 +38,6 @@
 
 use crate::constants::{CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, CORS_ALLOW_ORIGIN};
 use chrono::Utc;
-use uuid::Uuid;
 use worker::Headers;
 
 /// Generates an R2 storage key based on user context and file metadata.
@@ -188,44 +187,6 @@ fn categorize_content_type(content_type: &str) -> &'static str {
     } else {
         "other"
     }
-}
-
-/// Generates a cryptographically secure unique identifier for upload sessions.
-///
-/// This function creates a unique identifier that combines multiple entropy sources
-/// to ensure uniqueness across all upload sessions. The identifier is designed to be:
-/// - Globally unique across all workers and time periods
-/// - Sortable by creation time (timestamp prefix)
-/// - Sufficiently random to prevent guessing attacks
-/// - URL-safe and easy to handle in HTTP headers
-///
-/// # Returns
-///
-/// Returns a string identifier in the format: `{timestamp}-{uuid}-{random}`
-///
-/// # Identifier Components
-///
-/// 1. **Timestamp**: UTC milliseconds since epoch for temporal ordering
-/// 2. **UUID v4**: Cryptographically random UUID for global uniqueness
-/// 3. **Random**: Additional 64-bit random number for extra entropy
-///
-/// # Example
-///
-/// ```rust
-/// let upload_id = generate_unique_identifier();
-/// // Returns: "1641987000000-550e8400-e29b-41d4-a716-446655440000-123456789"
-/// ```
-///
-/// # Security Considerations
-///
-/// - Uses cryptographically secure random number generation
-/// - Provides sufficient entropy to prevent collision attacks
-/// - Timestamp component allows for time-based analysis and cleanup
-/// - UUID component ensures global uniqueness across distributed systems
-pub fn generate_unique_identifier() -> String {
-    let uuid_part = Uuid::new_v4().to_string();
-    let timestamp = Utc::now().timestamp_millis();
-    format!("{}-{}", timestamp, uuid_part)
 }
 
 /// Creates HTTP headers for Cross-Origin Resource Sharing (CORS) support.

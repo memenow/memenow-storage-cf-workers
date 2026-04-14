@@ -63,6 +63,7 @@ pub enum AppError {
     },
 
     /// Resource not found error.
+    #[allow(dead_code)]
     #[error("Not found: {message}")]
     NotFoundError {
         /// Not found error message
@@ -137,6 +138,7 @@ pub enum AppError {
     },
 
     /// Configuration loading or validation error.
+    #[allow(dead_code)]
     #[error("Configuration error: {message}")]
     ConfigError {
         /// Detailed configuration error message
@@ -144,6 +146,7 @@ pub enum AppError {
     },
 
     /// Authentication or authorization failure.
+    #[allow(dead_code)]
     #[error("Authentication error: {message}")]
     AuthError {
         /// Detailed authentication error message
@@ -151,6 +154,7 @@ pub enum AppError {
     },
 
     /// Rate limiting threshold exceeded.
+    #[allow(dead_code)]
     #[error("Rate limit exceeded")]
     RateLimitExceeded,
 
@@ -257,7 +261,7 @@ impl AppError {
                 "KV_ERROR",
                 format!("Configuration storage error: {}", message),
             ),
-            AppError::DatabaseError { message } => (502, "DATABASE_ERROR", message.clone()),
+            AppError::DatabaseError { message } => (500, "DATABASE_ERROR", message.clone()),
             AppError::ConfigError { message } => (
                 500,
                 "CONFIG_ERROR",

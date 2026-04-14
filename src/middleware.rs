@@ -56,30 +56,6 @@ use worker::*;
 pub struct CorsMiddleware;
 
 impl CorsMiddleware {
-    /// Applies CORS headers to an existing response.
-    ///
-    /// This method takes an existing response and adds the necessary CORS
-    /// headers to enable cross-origin requests. It's typically called by
-    /// handlers to ensure all responses support CORS.
-    ///
-    /// # Arguments
-    ///
-    /// * `response` - The response to which CORS headers will be added
-    ///
-    /// # Returns
-    ///
-    /// Returns the response with CORS headers applied.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let response = Response::from_json(&data)?;
-    /// let cors_response = CorsMiddleware::apply_headers(response);
-    /// ```
-    pub fn apply_headers(response: Response) -> Response {
-        response.with_headers(cors_headers())
-    }
-
     /// Handles CORS preflight requests (OPTIONS method).
     ///
     /// Preflight requests are sent by browsers before making cross-origin
@@ -193,14 +169,20 @@ impl ValidationMiddleware {
     pub fn validate_upload_headers(req: &Request) -> AppResult<(String, u16)> {
         let upload_id = req
             .headers()
-            .get(HEADER_UPLOAD_ID)?
+            .get(HEADER_UPLOAD_ID)
+            .map_err(|err| AppError::InternalError {
+                message: format!("Failed to read {HEADER_UPLOAD_ID} header: {err}"),
+            })?
             .ok_or(AppError::MissingField {
                 field: format!("{} header", HEADER_UPLOAD_ID),
             })?;
 
         let chunk_index = req
             .headers()
-            .get(HEADER_CHUNK_INDEX)?
+            .get(HEADER_CHUNK_INDEX)
+            .map_err(|err| AppError::InternalError {
+                message: format!("Failed to read {HEADER_CHUNK_INDEX} header: {err}"),
+            })?
             .ok_or(AppError::MissingField {
                 field: format!("{} header", HEADER_CHUNK_INDEX),
             })?

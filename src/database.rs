@@ -26,6 +26,7 @@ pub struct DatabaseService {
 #[derive(Debug, Clone)]
 pub struct UploadChunkRecord {
     pub chunk_index: u16,
+    #[allow(dead_code)]
     pub chunk_size: u64,
     pub etag: Option<String>,
 }
@@ -198,6 +199,7 @@ impl DatabaseService {
     }
 
     /// Delete an upload and cascade chunk cleanup.
+    #[allow(dead_code)]
     pub async fn delete_upload(&self, upload_id: &str) -> AppResult<()> {
         let statement = self.db.prepare("DELETE FROM uploads WHERE upload_id = ?1");
         let statement = statement
@@ -212,6 +214,7 @@ impl DatabaseService {
     }
 
     /// List uploads for a given user, optionally filtering by status.
+    #[allow(dead_code)]
     pub async fn get_user_uploads(
         &self,
         user_id: &str,
