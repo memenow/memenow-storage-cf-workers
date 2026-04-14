@@ -325,15 +325,13 @@ pub async fn get_upload_status(req: Request, env: &Env, config: &Config) -> AppR
     })?;
 
     let segments: Vec<&str> = url.path().split('/').collect();
-    let upload_id =
-        segments
-            .iter()
-            .rev()
-            .skip(1)
-            .next()
-            .ok_or_else(|| AppError::ValidationError {
-                message: "Upload ID missing from path".to_string(),
-            })?;
+    let upload_id = segments
+        .iter()
+        .rev()
+        .nth(1)
+        .ok_or_else(|| AppError::ValidationError {
+            message: "Upload ID missing from path".to_string(),
+        })?;
 
     let database = DatabaseService::new(env, &config.database_name)?;
     let Some(metadata) = database.get_upload(upload_id).await? else {
@@ -400,7 +398,7 @@ mod tests {
     use crate::database::UploadChunkRecord;
 
     #[test]
-    fn collect_part_descriptors_orders_parts_by_index() {
+    fn collect_part_descriptors_preserves_input_order() {
         let chunks = vec![
             UploadChunkRecord {
                 chunk_index: 1,

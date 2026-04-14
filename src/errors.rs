@@ -257,7 +257,7 @@ impl AppError {
                 "KV_ERROR",
                 format!("Configuration storage error: {}", message),
             ),
-            AppError::DatabaseError { message } => (502, "DATABASE_ERROR", message.clone()),
+            AppError::DatabaseError { message } => (500, "DATABASE_ERROR", message.clone()),
             AppError::ConfigError { message } => (
                 500,
                 "CONFIG_ERROR",
