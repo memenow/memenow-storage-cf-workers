@@ -86,34 +86,6 @@ impl CorsMiddleware {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validate_file_size_allows_within_limit() {
-        assert!(ValidationMiddleware::validate_file_size(1_048_576, 10_485_760).is_ok());
-    }
-
-    #[test]
-    fn validate_file_size_rejects_over_limit() {
-        let err = ValidationMiddleware::validate_file_size(20, 10).unwrap_err();
-        assert!(matches!(err, AppError::FileSizeExceeded { .. }));
-    }
-
-    #[test]
-    fn validate_content_type_accepts_known_prefix() {
-        assert!(ValidationMiddleware::validate_content_type("image/png").is_ok());
-    }
-
-    #[test]
-    fn validate_content_type_rejects_unknown_type() {
-        let err =
-            ValidationMiddleware::validate_content_type("application/x-msdownload").unwrap_err();
-        assert!(matches!(err, AppError::InvalidField { .. }));
-    }
-}
-
 /// Middleware for validating request parameters and headers.
 ///
 /// This middleware provides validation functions for various aspects of
@@ -293,5 +265,33 @@ impl ValidationMiddleware {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_file_size_allows_within_limit() {
+        assert!(ValidationMiddleware::validate_file_size(1_048_576, 10_485_760).is_ok());
+    }
+
+    #[test]
+    fn validate_file_size_rejects_over_limit() {
+        let err = ValidationMiddleware::validate_file_size(20, 10).unwrap_err();
+        assert!(matches!(err, AppError::FileSizeExceeded { .. }));
+    }
+
+    #[test]
+    fn validate_content_type_accepts_known_prefix() {
+        assert!(ValidationMiddleware::validate_content_type("image/png").is_ok());
+    }
+
+    #[test]
+    fn validate_content_type_rejects_unknown_type() {
+        let err =
+            ValidationMiddleware::validate_content_type("application/x-msdownload").unwrap_err();
+        assert!(matches!(err, AppError::InvalidField { .. }));
     }
 }

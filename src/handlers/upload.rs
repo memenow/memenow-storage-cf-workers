@@ -373,6 +373,10 @@ struct PartDescriptor {
 }
 
 /// Extracts part number and ETag pairs from chunk records, failing if any ETag is missing.
+///
+/// Preserves input order. The caller is responsible for supplying chunks sorted by
+/// `chunk_index` ASC — `DatabaseService::fetch_chunks` enforces this via its SQL
+/// `ORDER BY`, which R2 multipart completion requires.
 fn collect_part_descriptors(chunks: &[UploadChunkRecord]) -> AppResult<Vec<PartDescriptor>> {
     let mut parts = Vec::with_capacity(chunks.len());
 
@@ -402,12 +406,10 @@ mod tests {
         let chunks = vec![
             UploadChunkRecord {
                 chunk_index: 1,
-                chunk_size: 10,
                 etag: Some("etag-two".into()),
             },
             UploadChunkRecord {
                 chunk_index: 0,
-                chunk_size: 10,
                 etag: Some("etag-one".into()),
             },
         ];
@@ -424,7 +426,6 @@ mod tests {
     fn collect_part_descriptors_fails_without_etag() {
         let chunks = vec![UploadChunkRecord {
             chunk_index: 0,
-            chunk_size: 10,
             etag: None,
         }];
 

@@ -17,18 +17,16 @@ use worker::{d1::D1Database, wasm_bindgen::JsValue, Env};
 use crate::errors::{AppError, AppResult};
 use crate::models::{UploadMetadata, UploadStatus, UserRole};
 
-/// D1-backed persistence layer for uploads and chunk metadata.
-pub struct DatabaseService {
-    db: D1Database,
-}
-
-/// Lightweight representation of a stored chunk.
+/// Lightweight representation of a stored chunk used when finalizing uploads.
 #[derive(Debug, Clone)]
 pub struct UploadChunkRecord {
     pub chunk_index: u16,
-    #[allow(dead_code)]
-    pub chunk_size: u64,
     pub etag: Option<String>,
+}
+
+/// D1-backed persistence layer for uploads and chunk metadata.
+pub struct DatabaseService {
+    db: D1Database,
 }
 
 impl DatabaseService {
@@ -193,73 +191,15 @@ impl DatabaseService {
             .map_err(map_d1_error("record chunk"))
     }
 
-    /// Retrieve chunk metadata for an upload.
+    /// Retrieve chunk metadata for an upload, ordered by index.
     pub async fn get_upload_chunks(&self, upload_id: &str) -> AppResult<Vec<UploadChunkRecord>> {
         self.fetch_chunks(upload_id).await
-    }
-
-    /// Delete an upload and cascade chunk cleanup.
-    #[allow(dead_code)]
-    pub async fn delete_upload(&self, upload_id: &str) -> AppResult<()> {
-        let statement = self.db.prepare("DELETE FROM uploads WHERE upload_id = ?1");
-        let statement = statement
-            .bind(&[JsValue::from_str(upload_id)])
-            .map_err(map_d1_error("bind delete upload"))?;
-
-        statement
-            .run()
-            .await
-            .map(|_| ())
-            .map_err(map_d1_error("delete upload"))
-    }
-
-    /// List uploads for a given user, optionally filtering by status.
-    #[allow(dead_code)]
-    pub async fn get_user_uploads(
-        &self,
-        user_id: &str,
-        status: Option<UploadStatus>,
-    ) -> AppResult<Vec<UploadMetadata>> {
-        let (query, bindings): (&str, Vec<JsValue>) = match status {
-            Some(status) => (
-                "SELECT * FROM uploads WHERE user_id = ?1 AND status = ?2 ORDER BY created_at DESC",
-                vec![
-                    JsValue::from_str(user_id),
-                    JsValue::from_str(status.as_str()),
-                ],
-            ),
-            None => (
-                "SELECT * FROM uploads WHERE user_id = ?1 ORDER BY created_at DESC",
-                vec![JsValue::from_str(user_id)],
-            ),
-        };
-
-        let statement = self
-            .db
-            .prepare(query)
-            .bind(&bindings)
-            .map_err(map_d1_error("bind list uploads"))?;
-        let result = statement
-            .all()
-            .await
-            .map_err(map_d1_error("list uploads"))?;
-        let rows: Vec<UploadRow> = result
-            .results()
-            .map_err(map_d1_error("deserialize uploads"))?;
-
-        let mut uploads = Vec::with_capacity(rows.len());
-        for row in rows {
-            let chunks = self.fetch_chunks(&row.upload_id).await?;
-            uploads.push(row.try_into_metadata(chunks)?);
-        }
-
-        Ok(uploads)
     }
 
     /// Queries all chunks for an upload, ordered by index.
     async fn fetch_chunks(&self, upload_id: &str) -> AppResult<Vec<UploadChunkRecord>> {
         let statement = self.db.prepare(
-            "SELECT chunk_index, chunk_size, etag
+            "SELECT chunk_index, etag
              FROM upload_chunks
              WHERE upload_id = ?1
              ORDER BY chunk_index ASC",
@@ -278,7 +218,6 @@ impl DatabaseService {
             .into_iter()
             .map(|row| UploadChunkRecord {
                 chunk_index: row.chunk_index as u16,
-                chunk_size: row.chunk_size as u64,
                 etag: row.etag,
             })
             .collect())
@@ -305,7 +244,6 @@ struct UploadRow {
 #[derive(Debug, Deserialize)]
 struct ChunkRow {
     chunk_index: f64,
-    chunk_size: f64,
     etag: Option<String>,
 }
 
