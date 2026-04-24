@@ -1,13 +1,10 @@
 //! # Utility Functions
 //!
-//! This module provides utility functions used throughout the file storage service.
-//! It includes functions for generating unique identifiers, organizing files in storage,
-//! and handling HTTP headers for CORS support.
+//! Storage-path helpers and CORS header construction used across the service.
 //!
 //! ## Core Utilities
 //!
 //! - **R2 Key Generation**: Creates hierarchical storage paths based on user context
-//! - **Unique Identifiers**: Generates cryptographically secure upload session IDs
 //! - **CORS Headers**: Provides consistent cross-origin request support
 //!
 //! ## File Organization Strategy
@@ -18,22 +15,11 @@
 //! - Scalable storage organization
 //! - Future access control implementation
 //!
-//! ## Example Usage
+//! ## Example
 //!
 //! ```rust
-//! // Generate R2 storage key
-//! let request_body = json!({
-//!     "userRole": "creator",
-//!     "userId": "user123",
-//!     "fileName": "video.mp4",
-//!     "contentType": "video/mp4"
-//! });
-//! let key = generate_r2_key(&request_body);
+//! let key = generate_r2_key(&UserRole::Creator, "user123", "video.mp4", "video/mp4");
 //! // Result: "creator/user123/20240115/video/video.mp4"
-//!
-//! // Generate unique upload ID
-//! let upload_id = generate_unique_identifier();
-//! // Result: "1641987000000-550e8400-e29b-41d4-a716-446655440000-123456789"
 //! ```
 
 use crate::constants::{CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, CORS_ALLOW_ORIGIN};

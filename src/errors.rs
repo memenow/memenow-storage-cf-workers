@@ -15,8 +15,8 @@
 //! ## Error Categories
 //!
 //! - **Client Errors (4xx)**: Missing fields, invalid input, file size limits
-//! - **Server Errors (5xx)**: Storage failures, configuration issues, internal errors
-//! - **Service Errors (502)**: External service failures (R2, KV)
+//! - **Server Errors (500)**: Database failures and internal errors
+//! - **Upstream Errors (502)**: External service failures (R2)
 //!
 //! ## Example Error Response
 //!
@@ -32,7 +32,7 @@
 
 use serde_json::json;
 use thiserror::Error;
-use worker::{Error as WorkerError, Response, Result};
+use worker::{Response, Result};
 
 /// Application error enumeration covering all possible error conditions.
 ///
@@ -44,8 +44,8 @@ use worker::{Error as WorkerError, Response, Result};
 ///
 /// - **Validation Errors**: Missing or invalid input data
 /// - **Business Logic Errors**: Upload state violations, size limits
-/// - **Storage Errors**: Failures in R2, KV, or D1 database operations
-/// - **System Errors**: Configuration issues, rate limiting, internal failures
+/// - **Storage Errors**: R2 and D1 database operation failures
+/// - **System Errors**: Internal server failures
 #[derive(Error, Debug)]
 pub enum AppError {
     /// Required field is missing from request payload or headers.
@@ -55,18 +55,10 @@ pub enum AppError {
         field: String,
     },
 
-    /// Request validation error (replaces MissingField and InvalidField for simplicity).
+    /// Generic request payload validation error (malformed JSON, missing body, etc.).
     #[error("Validation error: {message}")]
     ValidationError {
         /// Validation error message
-        message: String,
-    },
-
-    /// Resource not found error.
-    #[allow(dead_code)]
-    #[error("Not found: {message}")]
-    NotFoundError {
-        /// Not found error message
         message: String,
     },
 
@@ -123,40 +115,12 @@ pub enum AppError {
         message: String,
     },
 
-    /// KV storage operation failure.
-    #[error("KV storage error: {message}")]
-    KvError {
-        /// Detailed error message from KV operation
-        message: String,
-    },
-
     /// D1 Database operation failure.
     #[error("Database error: {message}")]
     DatabaseError {
         /// Detailed error message from database operation
         message: String,
     },
-
-    /// Configuration loading or validation error.
-    #[allow(dead_code)]
-    #[error("Configuration error: {message}")]
-    ConfigError {
-        /// Detailed configuration error message
-        message: String,
-    },
-
-    /// Authentication or authorization failure.
-    #[allow(dead_code)]
-    #[error("Authentication error: {message}")]
-    AuthError {
-        /// Detailed authentication error message
-        message: String,
-    },
-
-    /// Rate limiting threshold exceeded.
-    #[allow(dead_code)]
-    #[error("Rate limit exceeded")]
-    RateLimitExceeded,
 
     /// Unexpected internal server error.
     #[error("Internal server error: {message}")]
@@ -192,14 +156,12 @@ impl AppError {
     ///
     /// # Status Code Mapping
     ///
-    /// - **400**: Client errors (missing/invalid fields, invalid chunk index)
-    /// - **401**: Authentication errors
+    /// - **400**: Client errors (missing/invalid fields, invalid chunk index, validation)
     /// - **404**: Resource not found (upload not found)
     /// - **409**: Conflict errors (upload already completed/cancelled)
     /// - **413**: Payload too large (file size exceeded)
-    /// - **429**: Rate limit exceeded
-    /// - **500**: Internal server errors (config, internal)
-    /// - **502**: External service errors (R2, KV)
+    /// - **500**: Internal server errors (database, internal)
+    /// - **502**: Upstream service errors (R2)
     pub fn to_response(&self) -> Result<Response> {
         let (status, error_code, message) = self.response_parts();
 
@@ -222,7 +184,6 @@ impl AppError {
                 format!("Missing required field: {}", field),
             ),
             AppError::ValidationError { message } => (400, "VALIDATION_ERROR", message.clone()),
-            AppError::NotFoundError { message } => (404, "NOT_FOUND", message.clone()),
             AppError::InvalidField { field, reason } => (
                 400,
                 "INVALID_FIELD",
@@ -256,62 +217,12 @@ impl AppError {
             AppError::R2Error { message } => {
                 (502, "R2_ERROR", format!("Storage error: {}", message))
             }
-            AppError::KvError { message } => (
-                502,
-                "KV_ERROR",
-                format!("Configuration storage error: {}", message),
-            ),
             AppError::DatabaseError { message } => (500, "DATABASE_ERROR", message.clone()),
-            AppError::ConfigError { message } => (
-                500,
-                "CONFIG_ERROR",
-                format!("Configuration error: {}", message),
-            ),
-            AppError::AuthError { message } => (
-                401,
-                "AUTH_ERROR",
-                format!("Authentication error: {}", message),
-            ),
-            AppError::RateLimitExceeded => (
-                429,
-                "RATE_LIMIT_EXCEEDED",
-                "Rate limit exceeded. Please try again later.".to_string(),
-            ),
             AppError::InternalError { message } => (
                 500,
                 "INTERNAL_ERROR",
                 format!("Internal server error: {}", message),
             ),
-        }
-    }
-}
-
-/// Automatic conversion from Cloudflare Worker errors to application errors.
-///
-/// This implementation provides seamless error conversion from the underlying
-/// Cloudflare Workers runtime errors to our structured application errors.
-/// It analyzes the error message to determine the appropriate error category.
-///
-/// # Error Classification
-///
-/// - **"not found"**: Maps to `DatabaseError`
-/// - **"KV" or "kv"**: Maps to `KvError`
-/// - **"R2" or "bucket"**: Maps to `R2Error`
-/// - **All others**: Maps to `InternalError`
-impl From<WorkerError> for AppError {
-    fn from(err: WorkerError) -> Self {
-        let error_msg = err.to_string();
-
-        if error_msg.contains("not found") {
-            AppError::DatabaseError {
-                message: error_msg.to_string(),
-            }
-        } else if error_msg.contains("KV") || error_msg.contains("kv") {
-            AppError::KvError { message: error_msg }
-        } else if error_msg.contains("R2") || error_msg.contains("bucket") {
-            AppError::R2Error { message: error_msg }
-        } else {
-            AppError::InternalError { message: error_msg }
         }
     }
 }

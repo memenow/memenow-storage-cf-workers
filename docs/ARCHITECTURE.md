@@ -190,11 +190,10 @@ Files are organized in R2 storage using a hierarchical structure:
 
 ### Error Categories
 - **Client Errors (4xx)**: Invalid input, missing fields, file size limits
-- **Authentication Errors (401)**: Future authentication failures
-- **Not Found Errors (404)**: Missing uploads or invalid endpoints
-- **Conflict Errors (409)**: Upload state conflicts
-- **Server Errors (5xx)**: Internal failures, storage errors
-- **Service Errors (502)**: External service failures (R2, KV)
+- **Not Found Errors (404)**: Missing uploads
+- **Conflict Errors (409)**: Upload state conflicts (already completed / cancelled)
+- **Server Errors (500)**: D1 database failures and internal errors
+- **Upstream Errors (502)**: R2 storage failures
 
 ### Error Response Format
 ```json
