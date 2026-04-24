@@ -44,8 +44,8 @@ use worker::{Response, Result};
 ///
 /// - **Validation Errors**: Missing or invalid input data
 /// - **Business Logic Errors**: Upload state violations, size limits
-/// - **Storage Errors**: Failures in R2, KV, or D1 database operations
-/// - **System Errors**: Configuration issues, rate limiting, internal failures
+/// - **Storage Errors**: R2 and D1 database operation failures
+/// - **System Errors**: Internal server failures
 #[derive(Error, Debug)]
 pub enum AppError {
     /// Required field is missing from request payload or headers.
