@@ -1,7 +1,9 @@
 name = "memenow-storage-cf-workers"
 main = "build/worker/shim.mjs"
-compatibility_date = "2025-08-15"
-logpush = true
+compatibility_date = "2026-03-25"
+
+[observability]
+enabled = true
 
 [placement]
 mode = "smart"
@@ -24,6 +26,3 @@ binding = "UPLOAD_DB"
 database_name = "xxxx"
 database_id = "your-prod-d1-database-id"
 preview_database_id = "your-dev-d1-database-id"
-
-[observability.logs]
-enabled = true

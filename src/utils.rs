@@ -22,7 +22,7 @@
 //! // Result: "creator/user123/20240115/video/video.mp4"
 //! ```
 
-use crate::constants::{CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, CORS_ALLOW_ORIGIN};
+use crate::constants::{CORS_ALLOW_HEADERS, CORS_ALLOW_METHODS, CORS_ALLOW_ORIGIN, CORS_MAX_AGE};
 use chrono::Utc;
 use worker::Headers;
 
@@ -216,6 +216,17 @@ pub fn cors_headers() -> Headers {
     let _ = headers.set("Access-Control-Allow-Origin", CORS_ALLOW_ORIGIN);
     let _ = headers.set("Access-Control-Allow-Methods", CORS_ALLOW_METHODS);
     let _ = headers.set("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS);
+    headers
+}
+
+/// Builds CORS headers tailored for preflight (OPTIONS) responses.
+///
+/// Adds `Access-Control-Max-Age` on top of the standard CORS headers so the
+/// browser can cache the preflight result. The header is meaningless on
+/// non-preflight responses and is therefore omitted from [`cors_headers`].
+pub fn cors_preflight_headers() -> Headers {
+    let headers = cors_headers();
+    let _ = headers.set("Access-Control-Max-Age", CORS_MAX_AGE);
     headers
 }
 

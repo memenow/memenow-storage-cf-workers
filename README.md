@@ -99,7 +99,7 @@ Content-Type: application/json
 ```json
 {
   "upload_id": "1641987000000-550e8400-e29b-41d4-a716-446655440000",
-  "chunk_size": 157286400,
+  "chunk_size": 99614720,
   "status": "initiated"
 }
 ```
@@ -197,14 +197,14 @@ The service uses KV storage for configuration with intelligent defaults:
 |---------|---------|-------------|
 | `database_name` | `UPLOAD_DB` | D1 database binding name |
 | `max_file_size` | `10737418240` | Maximum file size (10GB) |
-| `chunk_size` | `157286400` | Upload chunk size (150MB) |
+| `chunk_size` | `99614720` | Upload chunk size (95 MiB) |
 
 ### Configuration Example
 ```json
 {
   "database_name": "UPLOAD_DB",
   "max_file_size": 10737418240,
-  "chunk_size": 157286400
+  "chunk_size": 99614720
 }
 ```
 
@@ -340,13 +340,13 @@ The service provides built-in observability through:
 ## Performance
 
 ### Benchmarks
-- **Upload Throughput**: 150MB/s per chunk (edge location dependent)
+- **Upload Throughput**: ~95 MiB per chunk (edge location dependent)
 - **Concurrent Uploads**: 1000+ simultaneous uploads per worker
 - **Cold Start**: <50ms for worker initialization
 - **Chunk Processing**: <100ms per chunk including database operations
 
 ### Optimization Features
-- **Smart Chunking**: Optimal 150MB chunks for network efficiency
+- **Smart Chunking**: 95 MiB default chunks, sized to fit the Workers request body cap
 - **Parallel Processing**: Concurrent chunk uploads support
 - **Edge Caching**: Configuration cached at edge locations
 - **Connection Reuse**: Persistent connections to storage services
@@ -359,6 +359,12 @@ The service provides built-in observability through:
 - Path traversal attack prevention
 - Structured error responses (no information leakage)
 - CORS configuration for web application support
+
+> **Note**: `validate_content_type` is a coarse MIME-prefix allowlist intended to
+> catch obvious misuse, not a security boundary. The service trusts the
+> client-declared `Content-Type` and never inspects file bytes; deploy behind an
+> authenticated gateway and add content scanning if untrusted clients can call
+> the API directly.
 
 ### Future Enhancements
 - JWT-based authentication

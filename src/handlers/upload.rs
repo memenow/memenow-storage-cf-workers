@@ -10,7 +10,7 @@ use uuid::Uuid;
 use worker::{HttpMetadata, UploadedPart, *};
 
 use crate::config::Config;
-use crate::constants::{MAX_CHUNK_INDEX, STORAGE_BUCKET_NAME};
+use crate::constants::STORAGE_BUCKET_NAME;
 use crate::database::{DatabaseService, UploadChunkRecord};
 use crate::errors::{AppError, AppResult};
 use crate::middleware::ValidationMiddleware;
@@ -115,9 +115,7 @@ pub async fn initialize_upload(
 /// Upload a single chunk and persist chunk metadata.
 pub async fn upload_chunk(mut req: Request, env: &Env, config: &Config) -> AppResult<Response> {
     let (upload_id, chunk_index) = ValidationMiddleware::validate_upload_headers(&req)?;
-    if chunk_index > MAX_CHUNK_INDEX {
-        return Err(AppError::InvalidChunkIndex { index: chunk_index });
-    }
+    ValidationMiddleware::validate_chunk_index(chunk_index)?;
 
     let chunk_bytes = req.bytes().await.map_err(|err| AppError::ValidationError {
         message: format!("Failed to read chunk body: {err}"),
@@ -225,6 +223,9 @@ pub async fn complete_upload(mut req: Request, env: &Env, config: &Config) -> Ap
             message: "No uploaded chunks to finalize".to_string(),
         });
     }
+
+    verify_chunk_continuity(&chunk_records)?;
+    verify_total_size(&chunk_records, metadata.total_size)?;
 
     let uploaded_parts = build_uploaded_parts(&chunk_records)?;
 
@@ -365,6 +366,47 @@ fn build_uploaded_parts(chunks: &[UploadChunkRecord]) -> AppResult<Vec<UploadedP
     })
 }
 
+/// Ensures chunks form a contiguous sequence starting at index 0.
+///
+/// R2 multipart completion accepts non-contiguous part numbers and silently
+/// produces an object with data gaps, so callers must enforce contiguity.
+fn verify_chunk_continuity(chunks: &[UploadChunkRecord]) -> AppResult<()> {
+    for (expected, chunk) in chunks.iter().enumerate() {
+        if chunk.chunk_index as usize != expected {
+            return Err(AppError::ValidationError {
+                message: format!(
+                    "Missing chunk at index {expected}; next recorded index is {}",
+                    chunk.chunk_index
+                ),
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Confirms the recorded chunk byte total matches the declared upload size.
+fn verify_total_size(chunks: &[UploadChunkRecord], declared_total: u64) -> AppResult<()> {
+    let mut actual: u64 = 0;
+    for chunk in chunks {
+        actual = actual
+            .checked_add(chunk.chunk_size)
+            .ok_or_else(|| AppError::ValidationError {
+                message: "Aggregate chunk size overflowed u64".to_string(),
+            })?;
+    }
+
+    if actual != declared_total {
+        return Err(AppError::ValidationError {
+            message: format!(
+                "Uploaded byte total {actual} does not match declared total {declared_total}"
+            ),
+        });
+    }
+
+    Ok(())
+}
+
 /// Intermediate representation of an R2 part number and its ETag.
 #[derive(Debug, PartialEq, Eq)]
 struct PartDescriptor {
@@ -406,10 +448,12 @@ mod tests {
         let chunks = vec![
             UploadChunkRecord {
                 chunk_index: 1,
+                chunk_size: 1,
                 etag: Some("etag-two".into()),
             },
             UploadChunkRecord {
                 chunk_index: 0,
+                chunk_size: 1,
                 etag: Some("etag-one".into()),
             },
         ];
@@ -426,10 +470,67 @@ mod tests {
     fn collect_part_descriptors_fails_without_etag() {
         let chunks = vec![UploadChunkRecord {
             chunk_index: 0,
+            chunk_size: 1,
             etag: None,
         }];
 
         let error = collect_part_descriptors(&chunks).unwrap_err();
         assert!(matches!(error, AppError::ValidationError { .. }));
+    }
+
+    fn chunk(index: u16, size: u64) -> UploadChunkRecord {
+        UploadChunkRecord {
+            chunk_index: index,
+            chunk_size: size,
+            etag: Some(format!("etag-{index}")),
+        }
+    }
+
+    #[test]
+    fn verify_chunk_continuity_accepts_zero_based_sequence() {
+        let chunks = vec![chunk(0, 10), chunk(1, 10), chunk(2, 5)];
+        assert!(verify_chunk_continuity(&chunks).is_ok());
+    }
+
+    #[test]
+    fn verify_chunk_continuity_rejects_missing_first_chunk() {
+        let chunks = vec![chunk(1, 10)];
+        let error = verify_chunk_continuity(&chunks).unwrap_err();
+        assert!(matches!(error, AppError::ValidationError { .. }));
+    }
+
+    #[test]
+    fn verify_chunk_continuity_rejects_gap() {
+        let chunks = vec![chunk(0, 10), chunk(2, 10)];
+        let error = verify_chunk_continuity(&chunks).unwrap_err();
+        assert!(matches!(error, AppError::ValidationError { .. }));
+    }
+
+    #[test]
+    fn verify_total_size_matches_declared() {
+        let chunks = vec![chunk(0, 10), chunk(1, 5)];
+        assert!(verify_total_size(&chunks, 15).is_ok());
+    }
+
+    #[test]
+    fn verify_total_size_rejects_mismatch() {
+        let chunks = vec![chunk(0, 10), chunk(1, 5)];
+        let error = verify_total_size(&chunks, 20).unwrap_err();
+        assert!(matches!(error, AppError::ValidationError { .. }));
+    }
+
+    #[test]
+    fn verify_total_size_rejects_overflow() {
+        let chunks = vec![chunk(0, u64::MAX), chunk(1, 1)];
+        let error = verify_total_size(&chunks, 0).unwrap_err();
+        match error {
+            AppError::ValidationError { message } => {
+                assert!(
+                    message.contains("overflow"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected ValidationError, got {other:?}"),
+        }
     }
 }
