@@ -176,7 +176,7 @@ Files are organized in R2 storage using a hierarchical structure:
 - **Auto-scaling**: Zero cold starts with V8 isolation
 
 ### Upload Performance
-- **Chunked Uploads**: 150MB default chunk size
+- **Chunked Uploads**: 95 MiB default chunk size (under the Workers request body cap)
 - **Parallel Processing**: Support for concurrent chunk uploads
 - **Resumable Uploads**: State persistence enables resume capability
 - **Large File Support**: Up to 10GB file uploads
@@ -237,7 +237,7 @@ Files are organized in R2 storage using a hierarchical structure:
 
 ### Limits and Constraints
 - **File Size**: 10GB maximum (configurable)
-- **Chunk Size**: 150MB default (configurable)
+- **Chunk Size**: 95 MiB default (configurable)
 - **Concurrent Uploads**: Limited by client implementation
 - **D1 Limits**: Per Cloudflare's D1 database constraints
 

@@ -21,6 +21,7 @@ use crate::models::{UploadMetadata, UploadStatus, UserRole};
 #[derive(Debug, Clone)]
 pub struct UploadChunkRecord {
     pub chunk_index: u16,
+    pub chunk_size: u64,
     pub etag: Option<String>,
 }
 
@@ -199,7 +200,7 @@ impl DatabaseService {
     /// Queries all chunks for an upload, ordered by index.
     async fn fetch_chunks(&self, upload_id: &str) -> AppResult<Vec<UploadChunkRecord>> {
         let statement = self.db.prepare(
-            "SELECT chunk_index, etag
+            "SELECT chunk_index, chunk_size, etag
              FROM upload_chunks
              WHERE upload_id = ?1
              ORDER BY chunk_index ASC",
@@ -218,6 +219,7 @@ impl DatabaseService {
             .into_iter()
             .map(|row| UploadChunkRecord {
                 chunk_index: row.chunk_index as u16,
+                chunk_size: row.chunk_size as u64,
                 etag: row.etag,
             })
             .collect())
@@ -244,6 +246,7 @@ struct UploadRow {
 #[derive(Debug, Deserialize)]
 struct ChunkRow {
     chunk_index: f64,
+    chunk_size: f64,
     etag: Option<String>,
 }
 

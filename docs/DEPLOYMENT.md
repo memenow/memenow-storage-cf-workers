@@ -329,11 +329,11 @@ Set initial configuration in KV storage:
 
 ```bash
 # Development
-echo '{"database_name":"UPLOAD_DB","max_file_size":10737418240,"chunk_size":157286400}' | \
+echo '{"database_name":"UPLOAD_DB","max_file_size":10737418240,"chunk_size":99614720}' | \
 wrangler kv:key put "config" --binding=STORAGE_CONFIG --env=preview
 
 # Production
-echo '{"database_name":"UPLOAD_DB","max_file_size":10737418240,"chunk_size":157286400}' | \
+echo '{"database_name":"UPLOAD_DB","max_file_size":10737418240,"chunk_size":99614720}' | \
 wrangler kv:key put "config" --binding=STORAGE_CONFIG
 ```
 
@@ -341,7 +341,7 @@ wrangler kv:key put "config" --binding=STORAGE_CONFIG
 
 ```bash
 # Update max file size to 5GB
-echo '{"database_name":"UPLOAD_DB","max_file_size":5368709120,"chunk_size":157286400}' | \
+echo '{"database_name":"UPLOAD_DB","max_file_size":5368709120,"chunk_size":99614720}' | \
 wrangler kv:key put "config" --binding=STORAGE_CONFIG
 ```
 

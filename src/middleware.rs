@@ -31,9 +31,9 @@
 //! let (upload_id, chunk_index) = ValidationMiddleware::validate_upload_headers(&req)?;
 //! ```
 
-use crate::constants::{HEADER_CHUNK_INDEX, HEADER_UPLOAD_ID};
+use crate::constants::{HEADER_CHUNK_INDEX, HEADER_UPLOAD_ID, MAX_PART_NUMBER};
 use crate::errors::{AppError, AppResult};
-use crate::utils::cors_headers;
+use crate::utils::cors_preflight_headers;
 use worker::*;
 
 /// Middleware for handling Cross-Origin Resource Sharing (CORS) requests.
@@ -82,7 +82,7 @@ impl CorsMiddleware {
     /// - Custom headers (X-Upload-Id, X-Chunk-Index)
     /// - Non-simple content types
     pub fn handle_preflight() -> Result<Response> {
-        Ok(Response::empty()?.with_headers(cors_headers()))
+        Ok(Response::empty()?.with_headers(cors_preflight_headers()))
     }
 }
 
@@ -203,6 +203,22 @@ impl ValidationMiddleware {
         Ok(())
     }
 
+    /// Validates a 0-based chunk index against the R2 multipart part-number ceiling.
+    ///
+    /// R2 caps multipart uploads at `MAX_PART_NUMBER` parts. Indexes are 0-based and
+    /// map to part numbers via `part_number = chunk_index + 1`, so the largest
+    /// accepted index is `MAX_PART_NUMBER - 1`.
+    ///
+    /// # Errors
+    ///
+    /// - `InvalidChunkIndex`: When `chunk_index >= MAX_PART_NUMBER`.
+    pub fn validate_chunk_index(chunk_index: u16) -> AppResult<()> {
+        if chunk_index >= MAX_PART_NUMBER {
+            return Err(AppError::InvalidChunkIndex { index: chunk_index });
+        }
+        Ok(())
+    }
+
     /// Validates that a content type is supported by the service.
     ///
     /// This method checks the MIME type of uploaded files against a
@@ -212,12 +228,13 @@ impl ValidationMiddleware {
     /// # Supported Content Types
     ///
     /// - `image/*` - All image formats
-    /// - `video/*` - All video formats  
+    /// - `video/*` - All video formats
     /// - `audio/*` - All audio formats
     /// - `text/*` - Text files
     /// - `application/json` - JSON documents
     /// - `application/pdf` - PDF documents
     /// - `application/zip` - ZIP archives
+    /// - `application/octet-stream` - Generic binary payloads (default fallback)
     ///
     /// # Arguments
     ///
@@ -252,6 +269,7 @@ impl ValidationMiddleware {
             "application/json",
             "application/pdf",
             "application/zip",
+            "application/octet-stream",
         ];
 
         if !ALLOWED_TYPES
@@ -284,8 +302,35 @@ mod tests {
     }
 
     #[test]
+    fn validate_chunk_index_accepts_zero() {
+        assert!(ValidationMiddleware::validate_chunk_index(0).is_ok());
+    }
+
+    #[test]
+    fn validate_chunk_index_accepts_last_legal_index() {
+        assert!(ValidationMiddleware::validate_chunk_index(MAX_PART_NUMBER - 1).is_ok());
+    }
+
+    #[test]
+    fn validate_chunk_index_rejects_first_illegal_index() {
+        let err = ValidationMiddleware::validate_chunk_index(MAX_PART_NUMBER).unwrap_err();
+        assert!(matches!(err, AppError::InvalidChunkIndex { .. }));
+    }
+
+    #[test]
+    fn validate_chunk_index_rejects_max_u16() {
+        let err = ValidationMiddleware::validate_chunk_index(u16::MAX).unwrap_err();
+        assert!(matches!(err, AppError::InvalidChunkIndex { .. }));
+    }
+
+    #[test]
     fn validate_content_type_accepts_known_prefix() {
         assert!(ValidationMiddleware::validate_content_type("image/png").is_ok());
+    }
+
+    #[test]
+    fn validate_content_type_accepts_octet_stream_default() {
+        assert!(ValidationMiddleware::validate_content_type("application/octet-stream").is_ok());
     }
 
     #[test]

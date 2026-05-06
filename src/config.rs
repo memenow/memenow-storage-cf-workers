@@ -13,7 +13,7 @@
 //!
 //! - `database_name`: Name of the D1 database binding for upload tracking
 //! - `max_file_size`: Maximum allowed file size in bytes (default: 10GB)
-//! - `chunk_size`: Size of upload chunks in bytes (default: 150MB)
+//! - `chunk_size`: Size of upload chunks in bytes (default: 95 MiB)
 //!
 //! ## Example
 //!
@@ -53,7 +53,7 @@ impl Default for Config {
     ///
     /// Default values are optimized for:
     /// - Large file support (up to 10GB)
-    /// - Efficient chunking (150MB chunks)
+    /// - Efficient chunking (95 MiB chunks, under the Workers request body cap)
     /// - Standard D1 database binding name
     fn default() -> Self {
         Self {
@@ -94,7 +94,7 @@ impl Config {
     /// {
     ///   "database_name": "UPLOAD_DB",
     ///   "max_file_size": 10737418240,
-    ///   "chunk_size": 157286400
+    ///   "chunk_size": 99614720
     /// }
     /// ```
     ///

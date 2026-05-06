@@ -122,7 +122,7 @@ Content-Type: application/json
 ```json
 {
   "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
-  "chunk_size": 157286400,
+  "chunk_size": 99614720,
   "status": "initiated"
 }
 ```
@@ -565,7 +565,7 @@ Store configuration in KV under the key `config`:
 {
   "database_name": "UPLOAD_DB",
   "max_file_size": 10737418240,
-  "chunk_size": 157286400
+  "chunk_size": 99614720
 }
 ```
 
@@ -575,7 +575,7 @@ Store configuration in KV under the key `config`:
 |-------|------|---------|-------------|
 | `database_name` | string | "UPLOAD_DB" | D1 database binding name |
 | `max_file_size` | number | 10737418240 | Maximum file size in bytes (10GB) |
-| `chunk_size` | number | 157286400 | Recommended chunk size in bytes (150MB) |
+| `chunk_size` | number | 99614720 | Recommended chunk size in bytes (95 MiB) |
 
 ### Environment Setup
 

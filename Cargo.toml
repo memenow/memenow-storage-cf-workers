@@ -27,7 +27,7 @@ http = "1.4"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 thiserror = "2.0"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde", "wasmbind"] }
 uuid = { version = "1.23", features = ["serde", "v4", "js"] }
 
 [profile.release]
