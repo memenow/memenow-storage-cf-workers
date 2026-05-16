@@ -162,7 +162,7 @@ GET /api/upload/{upload_id}/status
   "status": "in_progress",
   "total_size": 1073741824,
   "chunks": [0, 1, 2, 3, 4],
-  "chunk_size": 157286400,
+  "chunk_size": 99614720,
   "r2_key": "creator/user123/20240112/video/video.mp4",
   "updated_at": "2024-01-12T10:35:00Z"
 }
@@ -267,7 +267,7 @@ subscriber/user789/20240112/document/report.pdf
    wrangler d1 execute memenow-uploads --file schema.sql
 
    # Create KV namespace
-   wrangler kv:namespace create "STORAGE_CONFIG"
+   wrangler kv namespace create "STORAGE_CONFIG"
    ```
 
 4. **Configure wrangler.toml**
@@ -340,7 +340,7 @@ The service provides built-in observability through:
 - R2 storage operation metrics
 - Custom error tracking
 
-## Performance
+## Performance & Design
 
 ### Design Choices
 - **95 MiB default chunks**: sized to stay under the Cloudflare Workers

@@ -259,7 +259,7 @@ GET /api/upload/{upload_id}/status
   "status": "in_progress",
   "total_size": 524288000,
   "chunks": [0, 1, 2, 3, 4],
-  "chunk_size": 157286400,
+  "chunk_size": 99614720,
   "r2_key": "creator/user_12345/20240105/video/example.mp4",
   "updated_at": "2024-01-05T10:35:00Z"
 }
@@ -272,7 +272,7 @@ GET /api/upload/{upload_id}/status
 | `upload_id` | string | Upload session identifier |
 | `status` | string | Current upload status |
 | `total_size` | number | Total file size in bytes (as declared at init) |
-| `chunks` | number[] | Indices of chunks that have been successfully uploaded |
+| `chunks` | number[] | Zero-based chunk indices (`u16`) that have been successfully uploaded |
 | `chunk_size` | number | Recommended chunk size in bytes |
 | `r2_key` | string | R2 storage path for the final object |
 | `updated_at` | string | Last update timestamp (ISO 8601) |
@@ -344,10 +344,12 @@ Files are organized in R2 storage using a structured path format that facilitate
 
 ### Example Paths
 
+The date segment is the upload day in UTC (`YYYYMMDD`).
+
 ```text
-creator/user123/20240115/image/profile.jpg
-member/user456/20240115/video/presentation.mp4
-subscriber/user789/20240115/document/report.pdf
+creator/user123/<YYYYMMDD>/image/profile.jpg
+member/user456/<YYYYMMDD>/video/presentation.mp4
+subscriber/user789/<YYYYMMDD>/document/report.pdf
 ```
 
 This structure enables:
@@ -592,7 +594,7 @@ Store configuration in KV under the key `config`:
 
 3. Create KV namespace:
    ```bash
-   wrangler kv:namespace create "STORAGE_CONFIG"
+   wrangler kv namespace create "STORAGE_CONFIG"
    ```
 
 ## Testing

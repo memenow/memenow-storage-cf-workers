@@ -154,12 +154,9 @@ pub struct UploadMetadata {
 /// Upload lifecycle state.
 ///
 /// Transitions:
-///
-/// ```text
-/// Initiated ──first chunk──▶ InProgress ──complete──▶ Completed
-///     │                          │
-///     └──────── cancel ──────────┴──▶ Cancelled
-/// ```
+/// - `Initiated`   --first chunk-->  `InProgress`
+/// - `InProgress`  --complete-->     `Completed`
+/// - `Initiated` | `InProgress` --cancel--> `Cancelled`
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum UploadStatus {
