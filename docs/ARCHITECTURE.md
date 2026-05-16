@@ -64,10 +64,11 @@ MemeNow Storage is a high-performance, edge-based file storage service built wit
 ### 4. Database Layer (`src/database.rs`)
 - **Primary Function**: Persistent upload state management via D1
 - **DatabaseService Responsibilities**:
-  - Upload CRUD operations (create, read, update, delete)
-  - Chunk progress tracking with upsert semantics
-  - Status lifecycle management
-  - User upload listing with optional status filtering
+  - Create upload metadata records (`create_upload`)
+  - Load upload metadata with associated chunk indices (`get_upload`)
+  - Track per-chunk progress with upsert semantics (`record_chunk`)
+  - Update upload status and `updated_at` timestamps (`update_upload_status`, `touch_upload`)
+  - Read chunks ordered by index for multipart completion (`get_upload_chunks`)
   - Row deserialization with timestamp and enum parsing
 
 ### 5. Models Layer (`src/models.rs`)
@@ -95,9 +96,12 @@ MemeNow Storage is a high-performance, edge-based file storage service built wit
 ### 8. Utilities (`src/utils.rs`)
 - **Primary Function**: Shared utility functions
 - **Features**:
-  - R2 key generation with hierarchical organization
-  - Cryptographically secure upload ID generation
-  - CORS header standardization
+  - R2 key generation with hierarchical organization (`generate_r2_key`)
+  - Path component and filename sanitization
+  - CORS header standardization (`cors_headers`)
+
+Upload identifiers are generated inline in the upload handler via
+[`uuid::Uuid::new_v4`].
 
 ## Data Flow
 
@@ -105,29 +109,37 @@ MemeNow Storage is a high-performance, edge-based file storage service built wit
 ```
 1. Client → POST /api/upload/init
 2. Router → CORS check → Upload handler
-3. Handler → Validate request → R2.create_multipart_upload()
-4. Handler → DatabaseService.create_upload() → Persist metadata in D1
-5. Response → Upload ID + R2 key + chunk_size
+3. Handler → ValidationMiddleware (file size, content type)
+4. Handler → R2.create_multipart_upload()
+5. Handler → DatabaseService.create_upload() → persist metadata in D1
+6. Response → { upload_id, chunk_size, status, r2_key }
 ```
 
 ### Chunk Upload Flow
 ```
-1. Client → PUT /api/upload/chunk + headers
-2. Router → Validation middleware → Upload handler
-3. Handler → DatabaseService.get_upload() → Load metadata from D1
-4. Handler → Validate state → R2.upload_part()
-5. Handler → DatabaseService.record_chunk() → Update progress in D1
-6. Response → Chunk confirmation + ETag
+1. Client → PUT /api/upload/chunk + X-Upload-Id + X-Chunk-Index
+2. Router → ValidationMiddleware.validate_upload_headers()
+3. Handler → ValidationMiddleware.validate_chunk_index()
+4. Handler → DatabaseService.get_upload() → load metadata from D1
+5. Handler → reject if status is Completed/Cancelled
+6. Handler → R2.resume_multipart_upload().upload_part()
+7. Handler → DatabaseService.record_chunk() → upsert chunk row in D1
+8. Handler → transition status Initiated → InProgress on first chunk,
+   otherwise DatabaseService.touch_upload()
+9. Response → { upload_id, chunk_index, etag, status }
 ```
 
 ### Upload Completion Flow
 ```
-1. Client → POST /api/upload/complete
-2. Router → Upload handler
-3. Handler → DatabaseService.get_upload() → Load metadata + chunks from D1
-4. Handler → R2.complete_multipart_upload()
-5. Handler → DatabaseService.update_upload_status() → Mark completed in D1
-6. Response → Completion confirmation + R2 key
+1. Client → POST /api/upload/complete { upload_id }
+2. Handler → DatabaseService.get_upload() → load metadata
+3. Handler → DatabaseService.get_upload_chunks() → fetch chunks ordered by index
+4. Handler → verify_chunk_continuity() (no gaps, starts at 0)
+5. Handler → verify_total_size() (sum of chunk_size == declared total_size)
+6. Handler → assemble UploadedPart list (chunk_index + 1, etag)
+7. Handler → R2.resume_multipart_upload().complete(parts)
+8. Handler → DatabaseService.update_upload_status(Completed)
+9. Response → { upload_id, status, r2_key }
 ```
 
 ## File Organization Strategy
@@ -154,9 +166,13 @@ Files are organized in R2 storage using a hierarchical structure:
 
 ### Upload Security
 - **File Size Limits**: Configurable maximum file size (default: 10GB)
-- **Content Type Validation**: Whitelist of allowed MIME types
-- **Unique Identifiers**: Cryptographically secure upload session IDs
-- **Chunk Validation**: ETag verification for uploaded chunks
+- **Content Type Validation**: Whitelist of allowed MIME type prefixes
+- **Path Sanitization**: User IDs, role, and filename are sanitized before
+  composing the R2 key (alphanumeric/`-`/`_` only for components; control
+  characters and path separators stripped from filenames)
+- **Chunk Index Cap**: Refuses chunk indices `>= MAX_PART_NUMBER` (10 000), the R2 multipart part-number ceiling
+- **Completion Integrity**: At completion, `verify_chunk_continuity` rejects gapped chunk sequences and `verify_total_size` rejects mismatched aggregate byte counts
+- **Unique Identifiers**: UUID v4 upload session IDs
 
 ### CORS Configuration
 - **Origin Policy**: Currently allows all origins (`*`)
@@ -172,19 +188,20 @@ Files are organized in R2 storage using a hierarchical structure:
 
 ### Edge Performance
 - **Global Distribution**: Deployed to Cloudflare's edge network
-- **Sub-50ms Latency**: Worldwide response times
-- **Auto-scaling**: Zero cold starts with V8 isolation
+- **V8 Isolates**: Per-isolate `OnceLock` cache for `Config` keeps the KV
+  round-trip out of the per-request path
 
 ### Upload Performance
 - **Chunked Uploads**: 95 MiB default chunk size (under the Workers request body cap)
-- **Parallel Processing**: Support for concurrent chunk uploads
-- **Resumable Uploads**: State persistence enables resume capability
-- **Large File Support**: Up to 10GB file uploads
+- **Parallel Processing**: Clients may upload chunks concurrently
+- **Resumable Uploads**: Per-chunk state persistence enables resume from the
+  last successfully recorded chunk
+- **Large File Support**: Up to 10GB file uploads (configurable)
 
 ### Storage Performance
-- **R2 Integration**: High-performance object storage
-- **Multipart Uploads**: Efficient handling of large files
-- **Global Availability**: R2's global distribution
+- **R2 Integration**: Multipart upload API used end-to-end
+- **D1 Indexes**: `uploads(user_id|status|created_at|user_role)` and
+  `upload_chunks(upload_id)` defined in `schema.sql`
 
 ## Error Handling Strategy
 
@@ -213,15 +230,9 @@ Files are organized in R2 storage using a hierarchical structure:
 - Returns: Service identification, status, timestamp
 
 ### Logging
-- Request/response logging via `console_log!`
-- D1 query operation logging
-- Error context preservation
-
-### Metrics (Future)
-- Upload success/failure rates
-- Chunk upload performance
-- Storage utilization
-- Error rate tracking
+- Request method + path logged on entry via `console_log!`
+- Worker observability enabled in `wrangler.toml`
+- Error responses include UTC timestamps for correlation
 
 ## Scalability Considerations
 

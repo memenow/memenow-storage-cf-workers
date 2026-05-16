@@ -80,10 +80,10 @@ wrangler r2 bucket create memenow-storage-prod
 
 ```bash
 # Development namespace
-wrangler kv:namespace create "STORAGE_CONFIG" --preview
+wrangler kv namespace create "STORAGE_CONFIG" --preview
 
 # Production namespace
-wrangler kv:namespace create "STORAGE_CONFIG"
+wrangler kv namespace create "STORAGE_CONFIG"
 ```
 
 Note the namespace IDs returned by these commands.
@@ -179,85 +179,33 @@ curl -X POST http://localhost:8787/api/upload/init \
 
 Set these in your GitHub repository settings (Settings → Secrets and variables → Actions):
 
-| Secret Name | Description | Example Value |
-|------------|-------------|---------------|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with Workers permissions | `your-api-token` |
-| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID | `your-account-id` |
-| `PROD_KV_NAMESPACE_ID` | Production KV namespace ID | `2437be2b7fa24e70b7b8c50718ec79ac` |
-| `DEV_KV_NAMESPACE_ID` | Development KV namespace ID | `8cdac03553594d1081cd367089313116` |
-| `PROD_D1_DATABASE_ID` | Production D1 database ID | `your-prod-d1-id` |
-| `DEV_D1_DATABASE_ID` | Development D1 database ID | `your-dev-d1-id` |
-
-### Create Deployment Workflow
-
-Create `.github/workflows/deploy.yml`:
-
-```yaml
-name: Deploy to Cloudflare Workers
-
-on:
-  push:
-    branches: [main]
-  release:
-    types: [published]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'release' && 'production' || 'preview' }}
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          target: wasm32-unknown-unknown
-          
-      - name: Install worker-build
-        run: cargo install worker-build
-        
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-          
-      - name: Install wrangler
-        run: npm install -g wrangler
-        
-      - name: Generate wrangler.toml
-        run: |
-          envsubst < wrangler.toml.template > wrangler.toml
-        env:
-          PROD_KV_NAMESPACE_ID: ${{ secrets.PROD_KV_NAMESPACE_ID }}
-          DEV_KV_NAMESPACE_ID: ${{ secrets.DEV_KV_NAMESPACE_ID }}
-          PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
-          DEV_D1_DATABASE_ID: ${{ secrets.DEV_D1_DATABASE_ID }}
-          
-      - name: Deploy to Cloudflare Workers
-        run: |
-          if [ "${{ github.event_name }}" == "release" ]; then
-            wrangler deploy
-          else
-            wrangler deploy --env preview
-          fi
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-```
+| Secret Name | Description |
+|------------|-------------|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with Workers permissions |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
+| `PROD_KV_NAMESPACE_ID` | Production KV namespace ID |
+| `DEV_KV_NAMESPACE_ID` | Development KV namespace ID |
+| `PROD_D1_DATABASE_NAME` | Production D1 database name |
+| `PROD_D1_DATABASE_ID` | Production D1 database ID |
+| `DEV_D1_DATABASE_ID` | Development D1 database ID |
+| `PROD_R2_BUCKET` | Production R2 bucket name |
+| `DEV_R2_BUCKET` | Development R2 bucket name |
 
 ### Deployment Workflow
 
-The GitHub Actions workflow automatically:
+The canonical workflow lives in `.github/workflows/deploy.yml`. Its behavior:
 
-1. **On push to main**: Deploys to preview environment
-2. **On release**: Deploys to production environment
-3. **Automatic setup**:
-   - Replaces template variables with secrets
-   - Builds the Rust/WASM project
-   - Deploys to Cloudflare Workers
-   - Uses existing D1 database schema
+1. **On push to `main`**: deploys to the preview environment via
+   `cloudflare/wrangler-action@v3` with `deploy --env preview`, then applies
+   `schema.sql` against the dev D1 binding (`--remote`).
+2. **On GitHub release**: deploys to production with `deploy`, then applies
+   `schema.sql` against the production D1 binding (`--remote`).
+3. **Configuration assembly**: copies `wrangler.toml.template` to
+   `wrangler.toml` and substitutes the secrets listed above via `sed`.
+
+`schema.sql` is idempotent (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF
+NOT EXISTS`, `CREATE VIEW IF NOT EXISTS`), so the schema step is safe to run
+on every deploy.
 
 ## Manual Deployment
 
@@ -330,11 +278,11 @@ Set initial configuration in KV storage:
 ```bash
 # Development
 echo '{"database_name":"UPLOAD_DB","max_file_size":10737418240,"chunk_size":99614720}' | \
-wrangler kv:key put "config" --binding=STORAGE_CONFIG --env=preview
+wrangler kv key put "config" --binding=STORAGE_CONFIG --env=preview
 
 # Production
 echo '{"database_name":"UPLOAD_DB","max_file_size":10737418240,"chunk_size":99614720}' | \
-wrangler kv:key put "config" --binding=STORAGE_CONFIG
+wrangler kv key put "config" --binding=STORAGE_CONFIG
 ```
 
 ### Update Configuration
@@ -342,20 +290,20 @@ wrangler kv:key put "config" --binding=STORAGE_CONFIG
 ```bash
 # Update max file size to 5GB
 echo '{"database_name":"UPLOAD_DB","max_file_size":5368709120,"chunk_size":99614720}' | \
-wrangler kv:key put "config" --binding=STORAGE_CONFIG
+wrangler kv key put "config" --binding=STORAGE_CONFIG
 ```
 
 ## Resource Naming Convention
 
-### Development Environment
-- **KV Namespace**: `DEV_MMN_STORAGE_CONFIG`
-- **D1 Database**: `memenow-uploads-dev`
-- **R2 Bucket**: `memenow-storage-dev`
+### Recommended resource names
 
-### Production Environment
-- **KV Namespace**: `PROD_MMN_STORAGE_CONFIG`
-- **D1 Database**: `memenow-uploads-prod`
-- **R2 Bucket**: `memenow-storage-prod`
+| Environment | D1 database | R2 bucket |
+|-------------|-------------|-----------|
+| Development | `memenow-uploads-dev` | `memenow-storage-dev` |
+| Production  | `memenow-uploads-prod` | `memenow-storage-prod` |
+
+KV namespaces are referenced by ID from secrets; only the binding name
+appears in `wrangler.toml`.
 
 ### Binding Names (in code)
 - **KV Binding**: `STORAGE_CONFIG`
@@ -377,14 +325,12 @@ wrangler logpush create --compatibility-date=2025-08-15
 2. **D1 Analytics**: Track database query performance and usage
 3. **R2 Metrics**: Monitor storage operations and bandwidth usage
 
-### Custom Metrics
+### Built-in Observability
 
-The service automatically tracks:
-- Upload initialization rate
-- Chunk upload success/failure
-- Upload completion rate
-- Average upload duration
-- Error rates by type
+- Worker observability is enabled in `wrangler.toml` (`[observability.logs]`).
+- Each request is logged on entry (method + path) by the worker.
+- Error responses include a UTC timestamp and machine-readable error code
+  for correlation with logs.
 
 ## Troubleshooting
 
@@ -426,7 +372,7 @@ wrangler d1 execute your-db --file=schema.sql
 ```bash
 # Check current bindings
 wrangler whoami
-wrangler kv:namespace list
+wrangler kv namespace list
 wrangler d1 list
 wrangler r2 bucket list
 

@@ -98,9 +98,10 @@ Content-Type: application/json
 **Response:**
 ```json
 {
-  "upload_id": "1641987000000-550e8400-e29b-41d4-a716-446655440000",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
   "chunk_size": 99614720,
-  "status": "initiated"
+  "status": "initiated",
+  "r2_key": "creator/user123/20240112/video/video.mp4"
 }
 ```
 
@@ -110,7 +111,7 @@ Uploads a single chunk of the file.
 ```http
 PUT /api/upload/chunk
 Content-Type: application/octet-stream
-X-Upload-Id: 1641987000000-550e8400-e29b-41d4-a716-446655440000
+X-Upload-Id: 550e8400-e29b-41d4-a716-446655440000
 X-Chunk-Index: 0
 
 [Binary chunk data]
@@ -119,9 +120,10 @@ X-Chunk-Index: 0
 **Response:**
 ```json
 {
-  "upload_id": "1641987000000-550e8400-e29b-41d4-a716-446655440000",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
   "chunk_index": 0,
-  "status": "uploaded"
+  "etag": "\"d41d8cd98f00b204e9800998ecf8427e\"",
+  "status": "in_progress"
 }
 ```
 
@@ -133,16 +135,16 @@ POST /api/upload/complete
 Content-Type: application/json
 
 {
-  "upload_id": "1641987000000-550e8400-e29b-41d4-a716-446655440000"
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Response:**
 ```json
 {
-  "upload_id": "1641987000000-550e8400-e29b-41d4-a716-446655440000",
-  "r2_key": "creator/user123/20240112/video/video.mp4",
-  "status": "completed"
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "r2_key": "creator/user123/20240112/video/video.mp4"
 }
 ```
 
@@ -156,15 +158,12 @@ GET /api/upload/{upload_id}/status
 **Response:**
 ```json
 {
-  "upload_id": "1641987000000-550e8400-e29b-41d4-a716-446655440000",
-  "file_name": "video.mp4",
-  "total_size": 1073741824,
-  "user_id": "user123",
-  "user_role": "creator",
-  "content_type": "video/mp4",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "in_progress",
-  "chunks_uploaded": 5,
-  "created_at": "2024-01-12T10:30:00Z",
+  "total_size": 1073741824,
+  "chunks": [0, 1, 2, 3, 4],
+  "chunk_size": 99614720,
+  "r2_key": "creator/user123/20240112/video/video.mp4",
   "updated_at": "2024-01-12T10:35:00Z"
 }
 ```
@@ -177,14 +176,14 @@ POST /api/upload/cancel
 Content-Type: application/json
 
 {
-  "upload_id": "1641987000000-550e8400-e29b-41d4-a716-446655440000"
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
 **Response:**
 ```json
 {
-  "upload_id": "1641987000000-550e8400-e29b-41d4-a716-446655440000",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "cancelled"
 }
 ```
@@ -268,7 +267,7 @@ subscriber/user789/20240112/document/report.pdf
    wrangler d1 execute memenow-uploads --file schema.sql
 
    # Create KV namespace
-   wrangler kv:namespace create "STORAGE_CONFIG"
+   wrangler kv namespace create "STORAGE_CONFIG"
    ```
 
 4. **Configure wrangler.toml**
@@ -314,12 +313,16 @@ The service provides structured error responses with appropriate HTTP status cod
 
 ### Common Error Codes
 - `MISSING_FIELD` (400): Required field missing from request
+- `VALIDATION_ERROR` (400): Request validation failed
 - `INVALID_FIELD` (400): Invalid field value or format
-- `FILE_TOO_LARGE` (413): File exceeds size limit
+- `INVALID_CHUNK_INDEX` (400): Chunk index out of range
 - `UPLOAD_NOT_FOUND` (404): Upload session not found
 - `UPLOAD_COMPLETED` (409): Upload already completed
-- `DATABASE_ERROR` (502): Database operation failed
-- `R2_ERROR` (502): Storage operation failed
+- `UPLOAD_CANCELLED` (409): Upload was cancelled
+- `FILE_TOO_LARGE` (413): File exceeds size limit
+- `DATABASE_ERROR` (500): D1 operation failed
+- `INTERNAL_ERROR` (500): Internal server error
+- `R2_ERROR` (502): R2 storage operation failed
 
 ## Monitoring
 
@@ -337,19 +340,18 @@ The service provides built-in observability through:
 - R2 storage operation metrics
 - Custom error tracking
 
-## Performance
+## Performance & Design
 
-### Benchmarks
-- **Upload Throughput**: ~95 MiB per chunk (edge location dependent)
-- **Concurrent Uploads**: 1000+ simultaneous uploads per worker
-- **Cold Start**: <50ms for worker initialization
-- **Chunk Processing**: <100ms per chunk including database operations
-
-### Optimization Features
-- **Smart Chunking**: 95 MiB default chunks, sized to fit the Workers request body cap
-- **Parallel Processing**: Concurrent chunk uploads support
-- **Edge Caching**: Configuration cached at edge locations
-- **Connection Reuse**: Persistent connections to storage services
+### Design Choices
+- **95 MiB default chunks**: sized to stay under the Cloudflare Workers
+  request body cap while keeping multipart overhead small
+- **Concurrent chunk uploads**: chunks may be issued in parallel by the client;
+  D1 upserts on `(upload_id, chunk_index)` keep state consistent
+- **Per-isolate config cache**: `Config` is loaded from KV at most once per
+  worker isolate via `OnceLock`, keeping the per-request hot path free of KV
+  round-trips
+- **D1 indexes**: indexes on `user_id`, `status`, `created_at`, `user_role`
+  back the typical query patterns (see `schema.sql`)
 
 ## Security
 

@@ -114,16 +114,17 @@ Content-Type: application/json
 | `file_name` | string | Yes | Original filename |
 | `total_size` | number | Yes | Total file size in bytes |
 | `user_role` | string | Yes | User role: `creator`, `member`, or `subscriber` |
-| `content_type` | string | Yes | MIME type of the file |
 | `user_id` | string | Yes | Unique user identifier |
+| `content_type` | string | No | MIME type of the file. Defaults to `application/octet-stream`. |
 
 #### Initialize Upload Response
 
 ```json
 {
-  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
   "chunk_size": 99614720,
-  "status": "initiated"
+  "status": "initiated",
+  "r2_key": "creator/user_12345/20240115/video/example.mp4"
 }
 ```
 
@@ -131,9 +132,10 @@ Content-Type: application/json
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `upload_id` | string | Unique upload session identifier |
+| `upload_id` | string | Upload session identifier (UUID v4) |
 | `chunk_size` | number | Recommended chunk size in bytes |
-| `status` | string | Current upload status |
+| `status` | string | Initial upload status (`initiated`) |
+| `r2_key` | string | R2 storage path that will hold the final object |
 
 **Status Codes:**
 - `200` - Upload initialized successfully
@@ -169,9 +171,10 @@ Binary data representing the file chunk.
 
 ```json
 {
-  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
   "chunk_index": 0,
-  "status": "uploaded"
+  "etag": "\"d41d8cd98f00b204e9800998ecf8427e\"",
+  "status": "in_progress"
 }
 ```
 
@@ -181,12 +184,14 @@ Binary data representing the file chunk.
 |-------|------|-------------|
 | `upload_id` | string | Upload session identifier |
 | `chunk_index` | number | Index of the uploaded chunk |
-| `status` | string | Status of the chunk upload |
+| `etag` | string | R2 ETag returned for the uploaded part |
+| `status` | string | Overall upload status after the chunk landed (typically `in_progress`) |
 
 **Status Codes:**
 - `200` - Chunk uploaded successfully
-- `400` - Invalid headers or chunk data
+- `400` - Invalid headers, empty body, or out-of-range chunk index
 - `404` - Upload session not found
+- `409` - Upload already completed or cancelled
 
 ---
 
@@ -203,7 +208,7 @@ Content-Type: application/json
 
 ```json
 {
-  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000"
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -217,9 +222,9 @@ Content-Type: application/json
 
 ```json
 {
-  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
-  "r2_key": "creator/user_12345/20240105/video/example.mp4",
-  "status": "completed"
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "completed",
+  "r2_key": "creator/user_12345/20240105/video/example.mp4"
 }
 ```
 
@@ -250,15 +255,12 @@ GET /api/upload/{upload_id}/status
 
 ```json
 {
-  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
-  "file_name": "example.mp4",
-  "total_size": 524288000,
-  "user_id": "user_12345",
-  "user_role": "creator",
-  "content_type": "video/mp4",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "in_progress",
-  "chunks_uploaded": 5,
-  "created_at": "2024-01-05T10:30:00Z",
+  "total_size": 524288000,
+  "chunks": [0, 1, 2, 3, 4],
+  "chunk_size": 99614720,
+  "r2_key": "creator/user_12345/20240105/video/example.mp4",
   "updated_at": "2024-01-05T10:35:00Z"
 }
 ```
@@ -268,14 +270,11 @@ GET /api/upload/{upload_id}/status
 | Field | Type | Description |
 |-------|------|-------------|
 | `upload_id` | string | Upload session identifier |
-| `file_name` | string | Original filename |
-| `total_size` | number | Total file size in bytes |
-| `user_id` | string | User identifier |
-| `user_role` | string | User role |
-| `content_type` | string | MIME type |
 | `status` | string | Current upload status |
-| `chunks_uploaded` | number | Number of chunks uploaded |
-| `created_at` | string | Upload creation timestamp (ISO 8601) |
+| `total_size` | number | Total file size in bytes (as declared at init) |
+| `chunks` | number[] | Zero-based chunk indices (`u16`) that have been successfully uploaded |
+| `chunk_size` | number | Recommended chunk size in bytes |
+| `r2_key` | string | R2 storage path for the final object |
 | `updated_at` | string | Last update timestamp (ISO 8601) |
 
 ##### Status Values
@@ -304,7 +303,7 @@ Content-Type: application/json
 
 ```json
 {
-  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000"
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
 
@@ -312,7 +311,7 @@ Content-Type: application/json
 
 ```json
 {
-  "upload_id": "1704447000000-550e8400-e29b-41d4-a716-446655440000",
+  "upload_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "cancelled"
 }
 ```
@@ -320,6 +319,7 @@ Content-Type: application/json
 **Status Codes:**
 - `200` - Upload cancelled successfully
 - `404` - Upload session not found
+- `409` - Upload already completed or cancelled
 
 ## File Organization
 
@@ -344,10 +344,12 @@ Files are organized in R2 storage using a structured path format that facilitate
 
 ### Example Paths
 
+The date segment is the upload day in UTC (`YYYYMMDD`).
+
 ```text
-creator/user123/20240115/image/profile.jpg
-member/user456/20240115/video/presentation.mp4
-subscriber/user789/20240115/document/report.pdf
+creator/user123/<YYYYMMDD>/image/profile.jpg
+member/user456/<YYYYMMDD>/video/presentation.mp4
+subscriber/user789/<YYYYMMDD>/document/report.pdf
 ```
 
 This structure enables:
@@ -592,7 +594,7 @@ Store configuration in KV under the key `config`:
 
 3. Create KV namespace:
    ```bash
-   wrangler kv:namespace create "STORAGE_CONFIG"
+   wrangler kv namespace create "STORAGE_CONFIG"
    ```
 
 ## Testing

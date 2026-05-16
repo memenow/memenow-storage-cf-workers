@@ -102,30 +102,11 @@ impl std::str::FromStr for UserRole {
     }
 }
 
-/// Complete metadata for an upload session.
-///
-/// This structure contains all information needed to track and manage
-/// a multipart file upload. It is persisted in D1 and updated
-/// throughout the upload lifecycle.
-///
-/// # Fields
-///
-/// - `upload_id`: Unique identifier for the upload session
-/// - `file_name`: Original filename provided by the client
-/// - `total_size`: Total file size in bytes
-/// - `created_at`: UTC timestamp when upload was initiated
-/// - `updated_at`: UTC timestamp of last metadata update
-/// - `user_role`: User's role for file organization
-/// - `content_type`: MIME type of the uploaded file
-/// - `status`: Current upload status
-/// - `chunks`: List of successfully uploaded chunk indices
-/// - `r2_key`: R2 storage key for the file
-/// - `user_id`: Identifier of the uploading user
-/// - `r2_upload_id`: R2 multipart upload identifier
+/// Complete metadata for an upload session, persisted in D1 across the
+/// upload lifecycle.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct UploadMetadata {
-    /// Unique identifier for this upload session.
-    /// Generated using UUID v4 with timestamp and random components.
+    /// Unique identifier for this upload session (UUID v4).
     pub upload_id: String,
 
     /// Original filename as provided by the client.
@@ -170,22 +151,12 @@ pub struct UploadMetadata {
     pub r2_upload_id: String,
 }
 
-/// Upload status enumeration tracking the lifecycle of an upload.
+/// Upload lifecycle state.
 ///
-/// The upload status progresses through these states:
-/// 1. `Initiated` - Upload session created but no chunks uploaded
-/// 2. `InProgress` - One or more chunks have been uploaded
-/// 3. `Completed` - All chunks uploaded and multipart upload completed
-/// 4. `Cancelled` - Upload was cancelled and R2 multipart upload aborted
-///
-/// # State Transitions
-///
-/// ```text
-/// Initiated -> InProgress -> Completed
-///     |             |
-///     v             v
-/// Cancelled <- Cancelled
-/// ```
+/// Transitions:
+/// - `Initiated`   --first chunk-->  `InProgress`
+/// - `InProgress`  --complete-->     `Completed`
+/// - `Initiated` | `InProgress` --cancel--> `Cancelled`
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum UploadStatus {
