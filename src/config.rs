@@ -1,24 +1,19 @@
 //! # Configuration Management
 //!
-//! This module provides configuration management for the file storage service.
-//! Configuration is stored in Cloudflare KV storage and loaded at runtime with
-//! intelligent defaults for all required settings.
+//! Configuration is read from the `STORAGE_CONFIG` KV namespace under the
+//! `"config"` key when present, otherwise the service falls back to
+//! [`Config::default`].
 //!
-//! ## Configuration Sources
+//! ## Fields
 //!
-//! 1. **KV Storage**: Primary configuration source stored under the "config" key
-//! 2. **Defaults**: Fallback values when KV storage is unavailable or empty
-//!
-//! ## Configuration Options
-//!
-//! - `database_name`: Name of the D1 database binding for upload tracking
-//! - `max_file_size`: Maximum allowed file size in bytes (default: 10GB)
-//! - `chunk_size`: Size of upload chunks in bytes (default: 95 MiB)
+//! - `database_name`: D1 database binding name used by `DatabaseService`.
+//! - `max_file_size`: hard cap on `total_size` accepted at upload init (default: 10 GB).
+//! - `chunk_size`: recommended chunk size returned to clients (default: 95 MiB, kept under the Workers request body cap).
 //!
 //! ## Example
 //!
 //! ```rust
-//! let kv = env.kv("CONFIG")?;
+//! let kv = env.kv("STORAGE_CONFIG")?;
 //! let config = Config::load(&kv).await?;
 //! println!("Max file size: {} bytes", config.max_file_size);
 //! ```
@@ -67,29 +62,12 @@ impl Default for Config {
 impl Config {
     /// Loads configuration from KV storage with fallback to defaults.
     ///
-    /// This method attempts to load configuration from the "config" key in
-    /// KV storage. If no configuration is found or if there's an error
-    /// parsing the stored configuration, it falls back to default values.
+    /// Reads the `"config"` key from KV. Returns [`Config::default`] when the
+    /// key is absent. KV access errors and JSON deserialization failures are
+    /// propagated.
     ///
-    /// # Arguments
+    /// Expected KV value:
     ///
-    /// * `kv` - Reference to the KV storage instance
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Result<Config>` containing either the loaded configuration
-    /// or an error if KV access fails.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let kv = env.kv("CONFIG")?;
-    /// let config = Config::load(&kv).await?;
-    /// ```
-    ///
-    /// # Configuration Format
-    ///
-    /// The expected JSON format in KV storage:
     /// ```json
     /// {
     ///   "database_name": "UPLOAD_DB",
@@ -97,17 +75,6 @@ impl Config {
     ///   "chunk_size": 99614720
     /// }
     /// ```
-    ///
-    /// # Error Handling
-    ///
-    /// - If KV storage is accessible but no config exists, uses defaults
-    /// - If KV storage throws an error, the error is propagated up
-    /// - Invalid JSON in storage will cause parsing errors
-    ///
-    /// # Performance Notes
-    ///
-    /// Configuration should be loaded once per request and shared via Arc
-    /// for optimal performance in high-throughput scenarios.
     pub async fn load(kv: &KvStore) -> Result<Self> {
         match kv.get("config").json().await? {
             Some(config) => {

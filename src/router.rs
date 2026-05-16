@@ -1,31 +1,18 @@
-//! # Request Routing and Dispatch
+//! # Request Routing
 //!
-//! This module handles HTTP request routing for the file storage service.
-//! It implements a pattern-based router that dispatches requests to appropriate
-//! handlers based on HTTP method and URL path patterns.
-//!
-//! ## Routing Strategy
-//!
-//! The router uses a simple pattern-matching approach that:
-//! - Handles CORS preflight requests automatically
-//! - Routes upload operations to D1 Database for state management
-//! - Provides health check endpoints for monitoring
-//! - Returns 404 responses for unmatched routes
+//! Pattern-based dispatcher for the file storage service. Matches HTTP method
+//! and path against a fixed route table and forwards to the appropriate
+//! handler. Handles CORS preflight early so `OPTIONS` never reaches a handler.
 //!
 //! ## Supported Routes
 //!
-//! - `GET /health` - Health check endpoint
-//! - `POST /api/upload/*` - Upload-related operations
-//! - `PUT /api/upload/*` - Upload chunk operations
-//! - `GET /api/upload/*` - Upload status queries
-//! - `OPTIONS *` - CORS preflight requests
-//!
-//! ## Architecture Benefits
-//!
-//! - **Centralized Routing**: Single point for request dispatch logic
-//! - **CORS Handling**: Automatic handling of cross-origin requests
-//! - **Database Integration**: Seamless delegation to D1 Database handlers
-//! - **Extensibility**: Easy to add new route patterns
+//! - `GET /health` — health check
+//! - `POST /api/upload/init` — initialize an upload
+//! - `PUT  /api/upload/chunk` — upload a chunk
+//! - `POST /api/upload/complete` — finalize the multipart upload
+//! - `POST /api/upload/cancel` — cancel an upload
+//! - `GET  /api/upload/{id}/status` — get upload status
+//! - `OPTIONS *` — CORS preflight
 
 use std::sync::Arc;
 use worker::*;
@@ -34,56 +21,12 @@ use crate::config::Config;
 use crate::handlers::{handle_health_check, handle_not_found, handle_upload_routes};
 use crate::middleware::CorsMiddleware;
 
-/// Handles incoming HTTP requests and routes them to appropriate handlers.
+/// Dispatches an incoming request to the appropriate handler.
 ///
-/// This function serves as the main request dispatcher for the file storage service.
-/// It implements a pattern-based routing system that matches HTTP method and path
-/// combinations to determine the appropriate handler.
-///
-/// # Request Flow
-///
-/// 1. **CORS Preflight**: Handles OPTIONS requests for cross-origin support
-/// 2. **Path Extraction**: Extracts URL path and HTTP method from request
-/// 3. **Pattern Matching**: Matches against known route patterns
-/// 4. **Handler Dispatch**: Delegates to appropriate handler function
-/// 5. **Error Handling**: Returns 404 for unmatched routes
-///
-/// # Arguments
-///
-/// * `req` - The incoming HTTP request
-/// * `env` - Cloudflare Worker environment for accessing bindings
-/// * `config` - Shared configuration loaded from KV storage
-///
-/// # Returns
-///
-/// Returns a `Result<Response>` containing either the handler response or an error.
-///
-/// # Route Patterns
-///
-/// - **Health Check**: `GET /health` → `handle_health_check`
-/// - **Upload Operations**: `/api/upload/*` → `handle_upload_routes`
-/// - **CORS Preflight**: `OPTIONS *` → `CorsMiddleware::handle_preflight`
-/// - **Unmatched**: `* *` → `handle_not_found`
-///
-/// # Example Request Flow
-///
-/// ```text
-/// POST /v1/uploads/init
-/// ↓
-/// handle_request()
-/// ↓
-/// handle_upload_routes()
-/// ↓
-/// D1 Database → DatabaseService
-/// ```
-///
-/// # Error Handling
-///
-/// - URL parsing errors are propagated up to the main handler
-/// - Unmatched routes return 404 Not Found responses
-/// - Handler-specific errors are managed by individual handlers
+/// CORS preflight is short-circuited before any path matching. Anything under
+/// `/api/upload` is delegated to [`handle_upload_routes`]; unmatched routes
+/// return 404 via [`handle_not_found`].
 pub async fn handle_request(req: Request, env: Env, config: Arc<Config>) -> Result<Response> {
-    // Handle CORS preflight requests early to avoid unnecessary processing
     if req.method() == Method::Options {
         return CorsMiddleware::handle_preflight();
     }
@@ -95,11 +38,8 @@ pub async fn handle_request(req: Request, env: Env, config: Arc<Config>) -> Resu
     console_log!("Routing request: {} {}", method, path);
 
     match (method, path) {
-        // Health check endpoint for monitoring and load balancer probes
         (Method::Get, "/health") => handle_health_check(req, env).await,
 
-        // Upload routes - all upload operations are delegated to D1 Database
-        // This ensures state consistency and proper handling of concurrent operations
         (Method::Post, path) if path.starts_with("/api/upload") => {
             handle_upload_routes(req, env, config).await
         }
@@ -110,7 +50,6 @@ pub async fn handle_request(req: Request, env: Env, config: Arc<Config>) -> Resu
             handle_upload_routes(req, env, config).await
         }
 
-        // Default 404 handler for unmatched routes
         _ => handle_not_found(req, env).await,
     }
 }

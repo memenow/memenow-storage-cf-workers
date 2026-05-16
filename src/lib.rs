@@ -1,38 +1,29 @@
 //! # MemeNow Storage - Cloudflare Workers
 //!
-//! A high-performance file storage service built with Rust and Cloudflare Workers.
-//! This service provides robust chunked upload capabilities for large files using
-//! R2 storage, D1 database for state management, and KV storage for configuration.
+//! Edge file storage service built with Rust on Cloudflare Workers. Provides
+//! chunked multipart uploads backed by R2 for object data, D1 for upload
+//! metadata, and KV for runtime configuration.
 //!
-//! ## Architecture
+//! ## Modules
 //!
-//! The service follows a modular architecture with clear separation of concerns:
-//! - **Router**: Routes incoming requests to appropriate handlers
-//! - **Middleware**: Handles CORS, validation, and error processing
-//! - **Handlers**: Process business logic for upload operations
-//! - **Database**: Manage upload state persistence with D1 SQL database
-//! - **Models**: Define data structures and types
-//! - **Utils**: Provide utility functions for file organization and ID generation
+//! - `router` — pattern-based HTTP dispatch.
+//! - `middleware` — CORS preflight, request validation.
+//! - `handlers` — upload lifecycle endpoints and health check.
+//! - `database` — D1-backed persistence for upload and chunk records.
+//! - `models` — shared types (`UploadMetadata`, `UploadStatus`, `UserRole`).
+//! - `config` — KV-loaded configuration with default fallbacks.
+//! - `errors` — structured `AppError` to HTTP response mapping.
+//! - `utils` — R2 key generation and CORS headers.
 //!
-//! ## Core Features
-//!
-//! - Chunked file uploads supporting files up to 10GB
-//! - Role-based file organization (creator/member/subscriber)
-//! - Multipart upload state management via D1 Database
-//! - Comprehensive error handling with structured responses
-//! - Configurable upload limits and chunk sizes
-//! - CORS support for web applications
-//!
-//! ## Example Usage
-//!
-//! The service exposes a REST API for file upload operations:
+//! ## Routes
 //!
 //! ```text
+//! GET  /health                      - Health check
 //! POST /api/upload/init             - Initialize a new upload
-//! PUT  /api/upload/chunk            - Upload a file chunk
-//! POST /api/upload/complete         - Complete the upload
+//! PUT  /api/upload/chunk            - Upload a chunk
+//! POST /api/upload/complete         - Finalize the multipart upload
+//! POST /api/upload/cancel           - Cancel an in-flight upload
 //! GET  /api/upload/{id}/status      - Get upload status
-//! POST /api/upload/cancel           - Cancel an upload
 //! ```
 
 use std::sync::{Arc, OnceLock};
@@ -53,50 +44,24 @@ use constants::STORAGE_CONFIG_KV_NAME;
 
 static CONFIG_CACHE: OnceLock<Arc<Config>> = OnceLock::new();
 
-/// Main entry point for the Cloudflare Worker.
+/// Worker fetch entry point.
 ///
-/// This function serves as the primary request handler that:
-/// 1. Sets up panic handling for better debugging
-/// 2. Loads configuration from KV storage with fallback to defaults
-/// 3. Delegates request routing to the router module
-///
-/// # Arguments
-///
-/// * `req` - The incoming HTTP request
-/// * `env` - Cloudflare Worker environment providing access to bindings
-/// * `_ctx` - Request context (unused in current implementation)
-///
-/// # Returns
-///
-/// Returns a `Result<Response>` containing either the HTTP response or an error.
-///
-/// # Error Handling
-///
-/// All errors are handled gracefully and converted to appropriate HTTP responses
-/// with structured error messages and proper status codes.
-///
-/// # Performance Considerations
-///
-/// - Configuration is loaded once per request and shared via Arc for efficiency
-/// - Request logging is minimal to reduce overhead
-/// - Panic hook is set only once globally
-/// - CORS headers are created per request for thread safety in WASM environment
+/// Installs the panic hook, resolves a cached `Config`, and hands the request
+/// to `router::handle_request`. Configuration is cached per worker isolate
+/// via `OnceLock`, so the KV round-trip happens at most once per isolate
+/// lifetime — not per request.
 #[event(fetch)]
 pub async fn main(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    // Set up panic hook for better error reporting in development
     console_error_panic_hook::set_once();
 
     console_log!("Request: {} {}", req.method(), req.url()?.path());
 
     let config = load_config(&env).await?;
 
-    // Route the request to appropriate handlers
     router::handle_request(req, env, config).await
 }
 
-/// Loads or retrieves cached configuration from KV storage.
-///
-/// Uses `OnceLock` to ensure config is parsed at most once per isolate lifetime.
+/// Loads configuration once per isolate and returns the cached `Arc<Config>`.
 async fn load_config(env: &Env) -> Result<Arc<Config>> {
     if let Some(config) = CONFIG_CACHE.get() {
         return Ok(config.clone());
